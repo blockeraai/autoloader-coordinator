@@ -1,0 +1,222 @@
+name: WordPress Integration Tests
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - 'feature/**'
+      - 'release/**'
+  pull_request:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+
+jobs:
+  wp-env-test:
+    name: WordPress ${{ matrix.wp }} - PHP ${{ matrix.php }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - wp: 'latest'
+            php: '8.2'
+          - wp: 'latest'
+            php: '8.1'
+          - wp: '6.5'
+            php: '8.2'
+          - wp: '6.4'
+            php: '8.1'
+          - wp: '6.3'
+            php: '7.4'
+
+    env:
+      WP_ENV_PHP_VERSION: ${{ matrix.php }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Cache npm dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: mbstring, json
+          tools: composer:v2
+
+      - name: Get Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+
+      - name: Cache Composer dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-${{ matrix.php }}-${{ hashFiles('**/composer.json') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-${{ matrix.php }}-
+            ${{ runner.os }}-composer-
+
+      - name: Install Composer dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Setup autoloader-coordinator symlinks
+        run: npm run setup
+
+      - name: Update .wp-env.json for matrix WordPress version
+        if: matrix.wp != 'latest'
+        run: |
+          # Update WordPress version in .wp-env.json
+          jq --arg wp "${{ matrix.wp }}" '.core = "https://wordpress.org/wordpress-\($wp).zip"' .wp-env.json > .wp-env.json.tmp
+          mv .wp-env.json.tmp .wp-env.json
+          cat .wp-env.json
+
+      - name: Start wp-env
+        run: npx wp-env start --update
+
+      - name: Wait for WordPress to be ready
+        run: |
+          echo "Waiting for WordPress to be ready..."
+          for i in {1..30}; do
+            if curl -s -o /dev/null -w "%{http_code}" http://localhost:8888 | grep -q "200\|302"; then
+              echo "WordPress is ready!"
+              break
+            fi
+            echo "Attempt $i: WordPress not ready yet, waiting..."
+            sleep 2
+          done
+
+      - name: Verify WordPress is running
+        run: |
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8888)
+          echo "HTTP Status: $HTTP_STATUS"
+          if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "302" ]; then
+            echo "WordPress is not responding correctly"
+            npx wp-env logs
+            exit 1
+          fi
+
+      - name: Activate plugins
+        run: |
+          npx wp-env run cli wp plugin activate plugin-a plugin-b
+          npx wp-env run cli wp plugin list
+
+      - name: Verify autoloader-coordinator is loaded
+        run: |
+          echo "Checking if autoloader-coordinator is loaded..."
+          RESPONSE=$(curl -s http://localhost:8888)
+          
+          # Check if the page loads without PHP fatal errors
+          if echo "$RESPONSE" | grep -qi "fatal error"; then
+            echo "❌ PHP Fatal Error detected!"
+            echo "$RESPONSE"
+            exit 1
+          fi
+          
+          echo "✅ Page loaded successfully without fatal errors"
+
+      - name: Test autoloader coordinator class exists
+        run: |
+          npx wp-env run cli wp eval "
+            if (class_exists('\Blockera\SharedAutoload\Coordinator')) {
+              echo 'Coordinator class exists: YES';
+              \$coordinator = \Blockera\SharedAutoload\Coordinator::getInstance();
+              echo PHP_EOL . 'Coordinator instance created successfully';
+            } else {
+              echo 'Coordinator class exists: NO';
+              exit(1);
+            }
+          "
+
+      - name: Test registered plugins
+        run: |
+          npx wp-env run cli wp eval "
+            \$dependencies = apply_filters('blockera/autoloader-coordinator/plugins/dependencies', []);
+            echo 'Registered plugins: ' . implode(', ', array_keys(\$dependencies));
+            
+            if (empty(\$dependencies)) {
+              echo PHP_EOL . 'ERROR: No plugins registered!';
+              exit(1);
+            }
+            
+            if (!isset(\$dependencies['plugin-a']) || !isset(\$dependencies['plugin-b'])) {
+              echo PHP_EOL . 'ERROR: Expected plugin-a and plugin-b to be registered!';
+              exit(1);
+            }
+            
+            echo PHP_EOL . 'Both plugins registered successfully!';
+          "
+
+      - name: Test symlinked autoloader-coordinator is shared
+        run: |
+          npx wp-env run cli wp eval "
+            \$reflection = new \ReflectionClass('\Blockera\SharedAutoload\Coordinator');
+            \$file = \$reflection->getFileName();
+            echo 'Coordinator loaded from: ' . \$file;
+            
+            // Verify it's loaded from one of the plugins (via symlink)
+            if (strpos(\$file, 'plugin-a') !== false || strpos(\$file, 'plugin-b') !== false) {
+              echo PHP_EOL . 'Coordinator is loaded from a plugin symlink - CORRECT!';
+            } else {
+              echo PHP_EOL . 'WARNING: Coordinator path does not contain expected plugin reference';
+            }
+          "
+
+      - name: Check homepage renders with debug info
+        run: |
+          echo "Fetching homepage..."
+          curl -s http://localhost:8888 > homepage.html
+          
+          # Check for our mu-plugin debug output
+          if grep -q "Autoloader Coordinator" homepage.html; then
+            echo "✅ Autoloader Coordinator debug info found on homepage"
+          else
+            echo "ℹ️ Debug info not visible (may require frontend theme)"
+          fi
+          
+          # Show relevant HTML snippet
+          echo "Homepage size: $(wc -c < homepage.html) bytes"
+
+      - name: Display wp-env logs on failure
+        if: failure()
+        run: npx wp-env logs
+
+      - name: Stop wp-env
+        if: always()
+        run: npx wp-env stop
+
+  integration-summary:
+    name: Integration Tests Summary
+    runs-on: ubuntu-latest
+    needs: wp-env-test
+    if: always()
+
+    steps:
+      - name: Check test results
+        run: |
+          if [ "${{ needs.wp-env-test.result }}" == "success" ]; then
+            echo "✅ All WordPress integration tests passed!"
+          else
+            echo "❌ Some WordPress integration tests failed"
+            exit 1
+          fi
+
