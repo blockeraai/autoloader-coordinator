@@ -14,9 +14,367 @@ on:
   workflow_dispatch:
 
 jobs:
-  wp-env-test:
+  # =====================================================
+  # SCENARIO-BASED VERSION RESOLUTION TESTS
+  # Tests autoloader-coordinator with different version combinations
+  # =====================================================
+  version-resolution-test:
+    name: "Scenario: ${{ matrix.scenario.name }}"
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario:
+          - name: "plugin-a-newer"
+            description: "Plugin A has newer version (2.0.0 vs 1.0.0)"
+            plugin_a_version: "2.0.0"
+            plugin_b_version: "1.0.0"
+            expected_winner: "plugin-a"
+            expected_version: "2.0.0"
+          
+          - name: "plugin-b-newer"
+            description: "Plugin B has newer version (1.0.0 vs 2.0.0)"
+            plugin_a_version: "1.0.0"
+            plugin_b_version: "2.0.0"
+            expected_winner: "plugin-b"
+            expected_version: "2.0.0"
+          
+          - name: "same-version"
+            description: "Both plugins have same version (1.0.0)"
+            plugin_a_version: "1.0.0"
+            plugin_b_version: "1.0.0"
+            expected_winner: "plugin-a"  # Default plugin wins on tie
+            expected_version: "1.0.0"
+          
+          - name: "major-version-diff"
+            description: "Major version difference (3.0.0 vs 1.0.0)"
+            plugin_a_version: "3.0.0"
+            plugin_b_version: "1.0.0"
+            expected_winner: "plugin-a"
+            expected_version: "3.0.0"
+          
+          - name: "patch-version-diff"
+            description: "Patch version difference (1.0.0 vs 1.0.1)"
+            plugin_a_version: "1.0.0"
+            plugin_b_version: "1.0.1"
+            expected_winner: "plugin-b"
+            expected_version: "1.0.1"
+
+    env:
+      WP_ENV_PHP_VERSION: "8.2"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Display scenario info
+        run: |
+          echo "╔════════════════════════════════════════════════════════════╗"
+          echo "║  SCENARIO: ${{ matrix.scenario.name }}"
+          echo "╠════════════════════════════════════════════════════════════╣"
+          echo "║  ${{ matrix.scenario.description }}"
+          echo "║"
+          echo "║  Plugin A version: ${{ matrix.scenario.plugin_a_version }}"
+          echo "║  Plugin B version: ${{ matrix.scenario.plugin_b_version }}"
+          echo "║  Expected winner:  ${{ matrix.scenario.expected_winner }}"
+          echo "║  Expected version: ${{ matrix.scenario.expected_version }}"
+          echo "╚════════════════════════════════════════════════════════════╝"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Cache npm dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mbstring, json
+          tools: composer:v2
+
+      - name: Get Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+
+      - name: Cache Composer dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-8.2-${{ hashFiles('**/composer.json') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-8.2-
+            ${{ runner.os }}-composer-
+
+      # =====================================================
+      # INSTALL SCENARIO FIXTURES
+      # =====================================================
+      - name: Install scenario fixtures
+        run: |
+          SCENARIO="${{ matrix.scenario.name }}"
+          echo "📦 Installing fixtures for scenario: $SCENARIO"
+          echo ""
+          
+          # Verify scenario directory exists
+          if [ ! -d ".github/fixtures/scenarios/$SCENARIO" ]; then
+            echo "❌ ERROR: Scenario directory not found: .github/fixtures/scenarios/$SCENARIO"
+            exit 1
+          fi
+          
+          # Override plugin-a files
+          echo "📥 Installing plugin-a fixtures..."
+          cp ".github/fixtures/scenarios/$SCENARIO/plugin-a/composer.json" plugin-a/packages/name-utils/composer.json
+          cp ".github/fixtures/scenarios/$SCENARIO/plugin-a/functions.php" plugin-a/packages/name-utils/php/functions.php
+          
+          # Override plugin-b files
+          echo "📥 Installing plugin-b fixtures..."
+          cp ".github/fixtures/scenarios/$SCENARIO/plugin-b/composer.json" plugin-b/packages/name-utils/composer.json
+          cp ".github/fixtures/scenarios/$SCENARIO/plugin-b/functions.php" plugin-b/packages/name-utils/php/functions.php
+          
+          echo ""
+          echo "✅ Scenario fixtures installed!"
+
+      - name: Verify fixture versions match scenario
+        run: |
+          echo "🔍 Verifying fixture versions..."
+          
+          PLUGIN_A_VERSION=$(jq -r '.version' plugin-a/packages/name-utils/composer.json)
+          PLUGIN_B_VERSION=$(jq -r '.version' plugin-b/packages/name-utils/composer.json)
+          
+          EXPECTED_A="${{ matrix.scenario.plugin_a_version }}"
+          EXPECTED_B="${{ matrix.scenario.plugin_b_version }}"
+          
+          echo "Plugin A version: $PLUGIN_A_VERSION (expected: $EXPECTED_A)"
+          echo "Plugin B version: $PLUGIN_B_VERSION (expected: $EXPECTED_B)"
+          
+          if [ "$PLUGIN_A_VERSION" != "$EXPECTED_A" ]; then
+            echo "❌ ERROR: Plugin A version mismatch!"
+            exit 1
+          fi
+          
+          if [ "$PLUGIN_B_VERSION" != "$EXPECTED_B" ]; then
+            echo "❌ ERROR: Plugin B version mismatch!"
+            exit 1
+          fi
+          
+          echo "✅ Fixture versions verified!"
+
+      - name: Install Composer dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Setup autoloader-coordinator symlinks
+        run: npm run setup
+
+      - name: Start wp-env
+        run: npx wp-env start --update
+
+      - name: Wait for WordPress to be ready
+        run: |
+          echo "Waiting for WordPress to be ready..."
+          for i in {1..30}; do
+            if curl -s -o /dev/null -w "%{http_code}" http://localhost:8888 | grep -q "200\|302"; then
+              echo "WordPress is ready!"
+              break
+            fi
+            echo "Attempt $i: WordPress not ready yet, waiting..."
+            sleep 2
+          done
+
+      - name: Verify WordPress is running
+        run: |
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8888)
+          echo "HTTP Status: $HTTP_STATUS"
+          if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "302" ]; then
+            echo "WordPress is not responding correctly"
+            npx wp-env logs
+            exit 1
+          fi
+
+      - name: Activate plugins
+        run: |
+          npx wp-env run cli wp plugin activate plugin-a plugin-b
+          npx wp-env run cli wp plugin list
+
+      - name: Verify autoloader-coordinator is loaded
+        run: |
+          echo "Checking if autoloader-coordinator is loaded..."
+          RESPONSE=$(curl -s http://localhost:8888)
+          
+          if echo "$RESPONSE" | grep -qi "fatal error"; then
+            echo "❌ PHP Fatal Error detected!"
+            echo "$RESPONSE"
+            exit 1
+          fi
+          
+          echo "✅ Page loaded successfully without fatal errors"
+
+      - name: Test autoloader coordinator class exists
+        run: |
+          npx wp-env run cli wp eval "
+            if (class_exists('\Blockera\SharedAutoload\Coordinator')) {
+              echo 'Coordinator class exists: YES';
+              \$coordinator = \Blockera\SharedAutoload\Coordinator::getInstance();
+              echo PHP_EOL . 'Coordinator instance created successfully';
+            } else {
+              echo 'Coordinator class exists: NO';
+              exit(1);
+            }
+          "
+
+      - name: Test registered plugins
+        run: |
+          npx wp-env run cli wp eval "
+            \$dependencies = apply_filters('blockera/autoloader-coordinator/plugins/dependencies', []);
+            echo 'Registered plugins: ' . implode(', ', array_keys(\$dependencies));
+            
+            if (empty(\$dependencies)) {
+              echo PHP_EOL . 'ERROR: No plugins registered!';
+              exit(1);
+            }
+            
+            if (!isset(\$dependencies['plugin-a']) || !isset(\$dependencies['plugin-b'])) {
+              echo PHP_EOL . 'ERROR: Expected plugin-a and plugin-b to be registered!';
+              exit(1);
+            }
+            
+            echo PHP_EOL . 'Both plugins registered successfully!';
+          "
+
+      # =====================================================
+      # VERSION RESOLUTION VERIFICATION
+      # =====================================================
+      - name: "Test version resolution: ${{ matrix.scenario.name }}"
+        id: version-test
+        run: |
+          echo "🧪 Testing version resolution for scenario: ${{ matrix.scenario.name }}"
+          echo ""
+          echo "Expected: version=${{ matrix.scenario.expected_version }}, loaded_from=${{ matrix.scenario.expected_winner }}"
+          echo ""
+          
+          RESULT=$(npx wp-env run cli wp eval "
+            if (!function_exists('blockera_name_utils_get_version')) {
+              echo 'ERROR:MISSING_VERSION_FUNCTION';
+              exit(0);
+            }
+            
+            if (!function_exists('blockera_name_utils_get_loaded_from')) {
+              echo 'ERROR:MISSING_LOADED_FROM_FUNCTION';
+              exit(0);
+            }
+            
+            \$version = blockera_name_utils_get_version();
+            \$loaded_from = blockera_name_utils_get_loaded_from();
+            
+            echo \$version . '|' . \$loaded_from;
+          " 2>&1)
+          
+          echo "Raw result: $RESULT"
+          
+          # Check for errors
+          if echo "$RESULT" | grep -q "ERROR:"; then
+            echo "❌ Helper function missing!"
+            echo "test_passed=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          # Parse the result - extract version and loaded_from
+          VERSION=$(echo "$RESULT" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | tail -1)
+          LOADED_FROM=$(echo "$RESULT" | grep -oE 'plugin-[ab]' | tail -1)
+          
+          echo ""
+          echo "Detected version: $VERSION"
+          echo "Loaded from: $LOADED_FROM"
+          
+          # Save outputs
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "loaded_from=$LOADED_FROM" >> $GITHUB_OUTPUT
+          
+          # Verify against expected values
+          EXPECTED_VERSION="${{ matrix.scenario.expected_version }}"
+          EXPECTED_WINNER="${{ matrix.scenario.expected_winner }}"
+          
+          if [ "$VERSION" = "$EXPECTED_VERSION" ] && [ "$LOADED_FROM" = "$EXPECTED_WINNER" ]; then
+            echo ""
+            echo "╔════════════════════════════════════════════════════════════╗"
+            echo "║  ✅ SUCCESS: Version resolution correct!                    ║"
+            echo "╠════════════════════════════════════════════════════════════╣"
+            echo "║  Version: $VERSION (expected: $EXPECTED_VERSION)"
+            echo "║  Loaded from: $LOADED_FROM (expected: $EXPECTED_WINNER)"
+            echo "╚════════════════════════════════════════════════════════════╝"
+            echo "test_passed=true" >> $GITHUB_OUTPUT
+          else
+            echo ""
+            echo "╔════════════════════════════════════════════════════════════╗"
+            echo "║  ❌ FAILURE: Version resolution incorrect!                  ║"
+            echo "╠════════════════════════════════════════════════════════════╣"
+            echo "║  Got version: $VERSION (expected: $EXPECTED_VERSION)"
+            echo "║  Got loaded_from: $LOADED_FROM (expected: $EXPECTED_WINNER)"
+            echo "╚════════════════════════════════════════════════════════════╝"
+            echo "test_passed=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: Test version constants
+        run: |
+          npx wp-env run cli wp eval "
+            echo '📋 Checking version constants...' . PHP_EOL;
+            
+            if (defined('BLOCKERA_NAME_UTILS_VERSION')) {
+              echo 'BLOCKERA_NAME_UTILS_VERSION = ' . BLOCKERA_NAME_UTILS_VERSION . PHP_EOL;
+            } else {
+              echo 'BLOCKERA_NAME_UTILS_VERSION is not defined' . PHP_EOL;
+            }
+            
+            if (defined('BLOCKERA_NAME_UTILS_LOADED_FROM')) {
+              echo 'BLOCKERA_NAME_UTILS_LOADED_FROM = ' . BLOCKERA_NAME_UTILS_LOADED_FROM . PHP_EOL;
+            } else {
+              echo 'BLOCKERA_NAME_UTILS_LOADED_FROM is not defined' . PHP_EOL;
+            }
+          "
+
+      - name: Test package metadata
+        run: |
+          npx wp-env run cli wp eval "
+            if (!function_exists('blockera_name_utils_get_metadata')) {
+              echo 'Metadata function not available';
+              exit(0);
+            }
+            
+            \$metadata = blockera_name_utils_get_metadata();
+            echo '📦 Package Metadata:' . PHP_EOL;
+            echo '  Version: ' . \$metadata['version'] . PHP_EOL;
+            echo '  Loaded from: ' . \$metadata['loaded_from'] . PHP_EOL;
+            echo '  Scenario: ' . (\$metadata['scenario'] ?? 'N/A') . PHP_EOL;
+            echo '  File: ' . \$metadata['file'] . PHP_EOL;
+          "
+
+      - name: Display wp-env logs on failure
+        if: failure()
+        run: npx wp-env logs
+
+      - name: Stop wp-env
+        if: always()
+        run: npx wp-env stop
+
+  # =====================================================
+  # WORDPRESS VERSION COMPATIBILITY TESTS
+  # Tests across different WordPress and PHP versions
+  # =====================================================
+  wp-compatibility-test:
     name: WordPress ${{ matrix.wp }} - PHP ${{ matrix.php }}
     runs-on: ubuntu-latest
+    needs: version-resolution-test
 
     strategy:
       fail-fast: false
@@ -73,6 +431,14 @@ jobs:
             ${{ runner.os }}-composer-${{ matrix.php }}-
             ${{ runner.os }}-composer-
 
+      - name: Install scenario fixtures (plugin-a-newer)
+        run: |
+          echo "📦 Installing plugin-a-newer scenario for compatibility test..."
+          cp ".github/fixtures/scenarios/plugin-a-newer/plugin-a/composer.json" plugin-a/packages/name-utils/composer.json
+          cp ".github/fixtures/scenarios/plugin-a-newer/plugin-a/functions.php" plugin-a/packages/name-utils/php/functions.php
+          cp ".github/fixtures/scenarios/plugin-a-newer/plugin-b/composer.json" plugin-b/packages/name-utils/composer.json
+          cp ".github/fixtures/scenarios/plugin-a-newer/plugin-b/functions.php" plugin-b/packages/name-utils/php/functions.php
+
       - name: Install Composer dependencies
         run: composer install --prefer-dist --no-interaction --no-progress
 
@@ -85,7 +451,6 @@ jobs:
       - name: Update .wp-env.json for matrix WordPress version
         if: matrix.wp != 'latest'
         run: |
-          # Update WordPress version in .wp-env.json
           jq --arg wp "${{ matrix.wp }}" '.core = "https://wordpress.org/wordpress-\($wp).zip"' .wp-env.json > .wp-env.json.tmp
           mv .wp-env.json.tmp .wp-env.json
           cat .wp-env.json
@@ -120,81 +485,32 @@ jobs:
           npx wp-env run cli wp plugin activate plugin-a plugin-b
           npx wp-env run cli wp plugin list
 
-      - name: Verify autoloader-coordinator is loaded
-        run: |
-          echo "Checking if autoloader-coordinator is loaded..."
-          RESPONSE=$(curl -s http://localhost:8888)
-          
-          # Check if the page loads without PHP fatal errors
-          if echo "$RESPONSE" | grep -qi "fatal error"; then
-            echo "❌ PHP Fatal Error detected!"
-            echo "$RESPONSE"
-            exit 1
-          fi
-          
-          echo "✅ Page loaded successfully without fatal errors"
-
-      - name: Test autoloader coordinator class exists
+      - name: Verify autoloader-coordinator works
         run: |
           npx wp-env run cli wp eval "
             if (class_exists('\Blockera\SharedAutoload\Coordinator')) {
               echo 'Coordinator class exists: YES';
               \$coordinator = \Blockera\SharedAutoload\Coordinator::getInstance();
-              echo PHP_EOL . 'Coordinator instance created successfully';
+              echo PHP_EOL . 'Coordinator works on WordPress ${{ matrix.wp }} + PHP ${{ matrix.php }}';
             } else {
               echo 'Coordinator class exists: NO';
               exit(1);
             }
           "
 
-      - name: Test registered plugins
+      - name: Quick version resolution check
         run: |
           npx wp-env run cli wp eval "
-            \$dependencies = apply_filters('blockera/autoloader-coordinator/plugins/dependencies', []);
-            echo 'Registered plugins: ' . implode(', ', array_keys(\$dependencies));
+            \$version = blockera_name_utils_get_version();
+            \$loaded_from = blockera_name_utils_get_loaded_from();
+            echo 'Version: ' . \$version . ' from ' . \$loaded_from;
             
-            if (empty(\$dependencies)) {
-              echo PHP_EOL . 'ERROR: No plugins registered!';
+            if (\$version !== '2.0.0' || \$loaded_from !== 'plugin-a') {
+              echo PHP_EOL . 'ERROR: Version resolution failed!';
               exit(1);
             }
-            
-            if (!isset(\$dependencies['plugin-a']) || !isset(\$dependencies['plugin-b'])) {
-              echo PHP_EOL . 'ERROR: Expected plugin-a and plugin-b to be registered!';
-              exit(1);
-            }
-            
-            echo PHP_EOL . 'Both plugins registered successfully!';
+            echo PHP_EOL . '✅ Version resolution correct!';
           "
-
-      - name: Test symlinked autoloader-coordinator is shared
-        run: |
-          npx wp-env run cli wp eval "
-            \$reflection = new \ReflectionClass('\Blockera\SharedAutoload\Coordinator');
-            \$file = \$reflection->getFileName();
-            echo 'Coordinator loaded from: ' . \$file;
-            
-            // Verify it's loaded from one of the plugins (via symlink)
-            if (strpos(\$file, 'plugin-a') !== false || strpos(\$file, 'plugin-b') !== false) {
-              echo PHP_EOL . 'Coordinator is loaded from a plugin symlink - CORRECT!';
-            } else {
-              echo PHP_EOL . 'WARNING: Coordinator path does not contain expected plugin reference';
-            }
-          "
-
-      - name: Check homepage renders with debug info
-        run: |
-          echo "Fetching homepage..."
-          curl -s http://localhost:8888 > homepage.html
-          
-          # Check for our mu-plugin debug output
-          if grep -q "Autoloader Coordinator" homepage.html; then
-            echo "✅ Autoloader Coordinator debug info found on homepage"
-          else
-            echo "ℹ️ Debug info not visible (may require frontend theme)"
-          fi
-          
-          # Show relevant HTML snippet
-          echo "Homepage size: $(wc -c < homepage.html) bytes"
 
       - name: Display wp-env logs on failure
         if: failure()
@@ -204,19 +520,165 @@ jobs:
         if: always()
         run: npx wp-env stop
 
+  # =====================================================
+  # INTEGRATION SUMMARY
+  # =====================================================
   integration-summary:
     name: Integration Tests Summary
     runs-on: ubuntu-latest
-    needs: wp-env-test
+    needs: [version-resolution-test, wp-compatibility-test]
     if: always()
 
     steps:
       - name: Check test results
         run: |
-          if [ "${{ needs.wp-env-test.result }}" == "success" ]; then
+          echo "📊 Test Results Summary"
+          echo ""
+          echo "Version Resolution Tests: ${{ needs.version-resolution-test.result }}"
+          echo "WP Compatibility Tests: ${{ needs.wp-compatibility-test.result }}"
+          echo ""
+          
+          if [ "${{ needs.version-resolution-test.result }}" == "success" ] && [ "${{ needs.wp-compatibility-test.result }}" == "success" ]; then
             echo "✅ All WordPress integration tests passed!"
           else
             echo "❌ Some WordPress integration tests failed"
             exit 1
           fi
 
+  # =====================================================
+  # PR COMMENT ON FAILURE
+  # =====================================================
+  pr-comment-on-failure:
+    name: Post PR Warning Comment
+    runs-on: ubuntu-latest
+    needs: [version-resolution-test, wp-compatibility-test]
+    if: failure() && github.event_name == 'pull_request'
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Post warning comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = context.payload.pull_request.number;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            
+            const commentBody = `## ⚠️ Autoloader Coordinator - Version Resolution Warning
+
+The WordPress integration tests have **failed**. This may indicate an issue with how the autoloader-coordinator resolves package versions.
+
+### Test Scenarios
+
+The following scenarios are tested to ensure correct version resolution:
+
+| Scenario | Plugin A | Plugin B | Expected Winner |
+|----------|----------|----------|-----------------|
+| plugin-a-newer | 2.0.0 | 1.0.0 | plugin-a |
+| plugin-b-newer | 1.0.0 | 2.0.0 | plugin-b |
+| same-version | 1.0.0 | 1.0.0 | plugin-a (default) |
+| major-version-diff | 3.0.0 | 1.0.0 | plugin-a |
+| patch-version-diff | 1.0.0 | 1.0.1 | plugin-b |
+
+### Possible Causes
+
+1. **Version comparison bug** - The coordinator may not be correctly comparing semantic versions
+2. **Loading order issue** - Packages may be loaded before version comparison occurs
+3. **Missing package registration** - A plugin may not be registering its packages correctly
+4. **Default/priority handling** - Same version tie-breaking may not work correctly
+
+### How to Debug
+
+1. Check the [workflow run logs](${runUrl}) for detailed error messages
+2. Look for the specific scenario that failed
+3. Verify the \`blockera_name_utils_get_version()\` and \`blockera_name_utils_get_loaded_from()\` outputs
+
+---
+
+🔗 **[View Full Workflow Run](${runUrl})**
+
+<sub>This comment was automatically generated by the CI workflow.</sub>`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+            });
+
+            const botComment = comments.find(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('Autoloader Coordinator - Version Resolution Warning')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: commentBody
+              });
+              console.log('Updated existing warning comment');
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: commentBody
+              });
+              console.log('Created new warning comment');
+            }
+
+  # =====================================================
+  # PR SUCCESS COMMENT
+  # =====================================================
+  pr-comment-on-success:
+    name: Update PR Comment on Success
+    runs-on: ubuntu-latest
+    needs: [version-resolution-test, wp-compatibility-test]
+    if: success() && github.event_name == 'pull_request'
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Remove or update warning comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = context.payload.pull_request.number;
+            
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+            });
+
+            const botComment = comments.find(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('Autoloader Coordinator - Version Resolution Warning')
+            );
+
+            if (botComment) {
+              const successBody = `## ✅ Autoloader Coordinator - All Tests Passing
+
+All version resolution tests are now **passing**.
+
+### Scenarios Tested
+
+| Scenario | Status |
+|----------|--------|
+| plugin-a-newer (2.0.0 vs 1.0.0) | ✅ Pass |
+| plugin-b-newer (1.0.0 vs 2.0.0) | ✅ Pass |
+| same-version (1.0.0 vs 1.0.0) | ✅ Pass |
+| major-version-diff (3.0.0 vs 1.0.0) | ✅ Pass |
+| patch-version-diff (1.0.0 vs 1.0.1) | ✅ Pass |
+
+<sub>This comment was automatically updated by the CI workflow.</sub>`;
+
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: successBody
+              });
+              console.log('Updated warning comment to show success');
+            }
