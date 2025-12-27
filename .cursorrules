@@ -1,0 +1,145 @@
+# Cursor IDE Rules for Autoloader Coordinator
+
+## Project Context
+
+This is a WordPress plugin development project that implements a shared autoloader coordinator system. The coordinator resolves version conflicts when multiple WordPress plugins ship the same Composer package.
+
+## Key Technologies
+
+- **PHP 7.4+** - WordPress plugin development
+- **Composer** - Dependency management with path repositories and symlinks
+- **WordPress** - Target platform (wp-env for local development)
+- **GitHub Actions** - CI/CD workflows
+- **PHPUnit** - Unit and integration testing
+
+## Code Style & Standards
+
+### PHP Code Style
+- Follow WordPress Coding Standards (WPCS)
+- Use PSR-4 autoloading for classes
+- Use WordPress hooks (`add_action`, `add_filter`) for extensibility
+- Always check `ABSPATH` constant for direct access prevention
+- Use type hints and return types where possible (PHP 7.4+)
+- Namespace: `Blockera\SharedAutoload` for coordinator classes
+
+### File Organization
+- Main coordinator class: `packages/autoloader-coordinator/class-shared-autoload-coordinator.php`
+- Loader entry point: `packages/autoloader-coordinator/loader.php`
+- Test plugins: `plugin-a/` and `plugin-b/` (for integration testing)
+- Test fixtures: `.github/fixtures/scenarios/` (version conflict scenarios)
+- Unit tests: `tests/phpunit/Unit/`
+- Integration tests: `tests/phpunit/Integration/`
+
+## Architecture Principles
+
+### Autoloader Coordinator
+- Singleton pattern for coordinator instance
+- Version-based package resolution (semantic versioning)
+- Transient caching for performance
+- Request-level memoization to prevent duplicate work
+- Plugin registration via WordPress filters
+
+### Package Resolution Logic
+1. Collect all package versions from registered plugins
+2. Compare versions using semantic versioning
+3. Select highest version (or default plugin if versions match)
+4. Load only the selected version's files
+5. Cache results in transients
+
+### Composer Integration
+- Uses path repositories with symlinks for local development
+- Copies packages in CI (symlinks don't work in Docker)
+- Regenerates autoload files after fixture installation
+- Validates autoload files contain expected entries
+
+## Development Workflow
+
+### Local Setup
+1. Run `./setup-wp-env.sh` to create symlinks
+2. Run `npm install` to install wp-env
+3. Run `wp-env start` to start WordPress
+4. Run `composer install` in each plugin directory
+
+### Testing
+- Unit tests: `vendor/bin/phpunit tests/phpunit/Unit/`
+- Integration tests: `vendor/bin/phpunit tests/phpunit/Integration/`
+- wp-env tests: See `.github/workflows/wp-env-integration.yml`
+
+### CI/CD
+- GitHub Actions workflows test all scenarios automatically
+- Version resolution tested across 5 scenarios
+- WordPress compatibility tested across 5 WP/PHP combinations
+- PR comments posted automatically with test results
+
+## Common Patterns
+
+### Plugin Registration
+```php
+add_filter('blockera/autoloader-coordinator/plugins/dependencies', function($dependencies) {
+    $dependencies['plugin-name'] = [
+        'dir' => __DIR__,
+        'priority' => 10,
+        'default' => true, // or false
+    ];
+    return $dependencies;
+});
+```
+
+### Loading Coordinator
+```php
+require_once __DIR__ . '/packages/autoloader-coordinator/loader.php';
+\Blockera\SharedAutoload\Coordinator::getInstance()->registerPlugin();
+\Blockera\SharedAutoload\Coordinator::getInstance()->bootstrap();
+```
+
+### Package Version Detection
+- Coordinator searches for `composer.json` files upward from package paths
+- Extracts `name` and `version` fields
+- Uses semantic versioning for comparison
+
+## Important Files
+
+- `.wp-env.json` - WordPress environment configuration
+- `.github/workflows/wp-env-integration.yml` - CI workflow
+- `.github/fixtures/scenarios/` - Test fixtures for version conflicts
+- `setup-wp-env.sh` - Local development setup script
+
+## Error Handling
+
+- Always exit with code 1 on errors in CI
+- Use `set -e` in bash scripts for fail-fast behavior
+- Validate function/class existence before use
+- Check file existence before requiring/including
+- Clear coordinator cache on plugin activation/deactivation
+
+## Performance Considerations
+
+- Use transients for caching (1 hour TTL)
+- Request-level memoization for expensive operations
+- Lazy loading of autoload manifests
+- Only load files from winning package version
+
+## Testing Scenarios
+
+1. **plugin-a-newer**: Plugin A has newer version (2.0.0 vs 1.0.0)
+2. **plugin-b-newer**: Plugin B has newer version (1.0.0 vs 2.0.0)
+3. **same-version**: Both plugins have same version (1.0.0)
+4. **major-version-diff**: Major version difference (3.0.0 vs 1.0.0)
+5. **patch-version-diff**: Patch version difference (1.0.0 vs 1.0.1)
+
+## When Making Changes
+
+- Update tests when changing coordinator logic
+- Update fixtures when changing test scenarios
+- Update CI workflow when changing test structure
+- Update documentation when changing architecture
+- Ensure backward compatibility for existing plugins
+
+## Debugging
+
+- Check `wp-content/debug.log` for PHP errors
+- Use `mu-plugins/autoloader-coordinator-debug.php` for frontend debugging
+- Check Composer autoload files in `vendor/composer/autoload_files.php`
+- Verify plugin registration via `wp eval` commands
+- Check coordinator cache transients: `blockera_pkgs_files`, `blockera_pkg_manifest`
+

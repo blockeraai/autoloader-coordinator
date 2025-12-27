@@ -1,6 +1,7 @@
 <?php
 /**
  * Name Utils - Version 1.0.0 (Plugin B)
+ * Scenario: same-version (both plugins have v1.0.0)
  * 
  * @package Blockera\NameUtils
  * @version 1.0.0
@@ -32,7 +33,8 @@ if ( ! function_exists( 'blockera_name_utils_get_metadata' ) ) {
             'version'     => '1.0.0',
             'loaded_from' => 'plugin-b',
             'file'        => __FILE__,
-            'scenario'    => 'patch-version-diff',
+            'scenario'    => 'same-version',
         ];
     }
 }
+

@@ -1,0 +1,28 @@
+{
+  "name": "autoloader-coordinator",
+  "version": "1.0.0",
+  "description": "Coordinates autoloading across WordPress plugins to resolve version conflicts and optimize shared package loading.",
+  "private": true,
+  "scripts": {
+    "setup": "./setup-wp-env.sh",
+    "wp-env": "wp-env",
+    "start": "npm run setup && wp-env start",
+    "stop": "wp-env stop",
+    "clean": "wp-env clean all",
+    "destroy": "wp-env destroy",
+    "logs": "wp-env logs",
+    "cli": "wp-env run cli",
+    "test:integration": "npm run start && npm run test:wp && npm run stop",
+    "test:wp": "wp-env run cli wp eval \"echo 'WordPress is running';\"",
+    "activate-plugins": "wp-env run cli wp plugin activate plugin-a plugin-b"
+  },
+  "devDependencies": {
+    "@wordpress/env": "^10.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "author": "Blockera",
+  "license": "GPL-2.0-or-later"
+}
+

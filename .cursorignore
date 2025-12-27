@@ -1,0 +1,61 @@
+# Cursor IDE Ignore File
+
+# Dependencies
+node_modules/
+vendor/
+composer.lock
+package-lock.json
+
+# WordPress Environment
+.wp-env/
+.wp-env.override.json
+
+# Build artifacts
+*.log
+*.cache
+.DS_Store
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Test coverage
+coverage/
+.phpunit.result.cache
+
+# Temporary files
+*.tmp
+*.temp
+.tmp/
+
+# Git
+.git/
+.gitignore
+
+# CI/CD artifacts (keep workflow files visible)
+.github/workflows/*.yml
+
+# Large binary files
+*.zip
+*.tar.gz
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# WordPress core (if downloaded)
+wordpress/
+wp-content/uploads/
+
+# Plugin vendor directories (keep structure visible but ignore contents)
+plugin-a/vendor/
+plugin-b/vendor/
+
+# Autoloader coordinator copies in plugins (keep source visible)
+plugin-a/packages/autoloader-coordinator/
+plugin-b/packages/autoloader-coordinator/
+

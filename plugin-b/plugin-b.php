@@ -41,5 +41,70 @@ add_action('activated_plugin', [ \Blockera\SharedAutoload\Coordinator::getInstan
 add_action('deactivated_plugin', [ \Blockera\SharedAutoload\Coordinator::getInstance(), 'invalidatePackageManifest' ]);
 add_action('upgrader_process_complete', [ \Blockera\SharedAutoload\Coordinator::getInstance(), 'invalidatePackageManifest' ]);
 
-echo plugin_b_print_name('Guest User');
+// Use name-utils package functions (loaded via autoloader-coordinator)
+add_action('admin_notices', function() {
+    if ( ! function_exists( 'blockera_name_utils_get_version' ) || ! function_exists( 'blockera_name_utils_get_loaded_from' ) ) {
+        return; // name-utils package not loaded yet
+    }
+    
+    $version = blockera_name_utils_get_version();
+    $loaded_from = blockera_name_utils_get_loaded_from();
+    
+    // Display version info in admin notices
+    printf(
+        '<div class="notice notice-info is-dismissible">
+            <p><strong>Plugin B:</strong> name-utils package v%s loaded from %s</p>
+        </div>',
+        esc_html( $version ),
+        esc_html( $loaded_from )
+    );
+    
+    // Demonstrate v2.0.0+ exclusive feature if available
+    if ( function_exists( 'blockera_format_name' ) ) {
+        $formatted = blockera_format_name( 'plugin b user' );
+        printf(
+            '<div class="notice notice-success is-dismissible">
+                <p><strong>Plugin B:</strong> Using v2.0.0+ feature: <code>blockera_format_name()</code> - "%s"</p>
+            </div>',
+            esc_html( $formatted )
+        );
+    }
+});
+
+// Display on frontend footer for testing
+add_action('wp_footer', function() {
+    if ( ! function_exists( 'blockera_name_utils_get_version' ) || ! function_exists( 'blockera_name_utils_get_loaded_from' ) ) {
+        return;
+    }
+    
+    $version = blockera_name_utils_get_version();
+    $loaded_from = blockera_name_utils_get_loaded_from();
+    
+    // Only show on frontend for testing purposes
+    if ( ! is_admin() && current_user_can( 'manage_options' ) ) {
+        echo sprintf(
+            '<!-- Plugin B: name-utils v%s from %s -->',
+            esc_html( $version ),
+            esc_html( $loaded_from )
+        );
+    }
+}, 999 );
+
+// Legacy function for backward compatibility
+if ( ! function_exists( 'plugin_b_print_name' ) ) {
+    function plugin_b_print_name( string $name ): void {
+        if ( function_exists( 'blockera_name_utils_get_version' ) ) {
+            $version = blockera_name_utils_get_version();
+            $loaded_from = blockera_name_utils_get_loaded_from();
+            echo sprintf(
+                'Hello, %s! (name-utils v%s from %s)',
+                esc_html( $name ),
+                esc_html( $version ),
+                esc_html( $loaded_from )
+            );
+        } else {
+            echo 'Hello, ' . esc_html( $name ) . '!';
+        }
+    }
+}
 

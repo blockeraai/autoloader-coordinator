@@ -1,13 +1,14 @@
 <?php
 /**
- * Name Utils - Version 1.0.0 (Plugin B)
+ * Name Utils - Version 2.0.0 (Plugin B)
+ * Scenario: plugin-b-newer
  * 
  * @package Blockera\NameUtils
- * @version 1.0.0
+ * @version 2.0.0
  */
 
 if ( ! defined( 'BLOCKERA_NAME_UTILS_VERSION' ) ) {
-    define( 'BLOCKERA_NAME_UTILS_VERSION', '1.0.0' );
+    define( 'BLOCKERA_NAME_UTILS_VERSION', '2.0.0' );
 }
 
 if ( ! defined( 'BLOCKERA_NAME_UTILS_LOADED_FROM' ) ) {
@@ -16,7 +17,7 @@ if ( ! defined( 'BLOCKERA_NAME_UTILS_LOADED_FROM' ) ) {
 
 if ( ! function_exists( 'blockera_name_utils_get_version' ) ) {
     function blockera_name_utils_get_version(): string {
-        return '1.0.0';
+        return '2.0.0';
     }
 }
 
@@ -29,10 +30,18 @@ if ( ! function_exists( 'blockera_name_utils_get_loaded_from' ) ) {
 if ( ! function_exists( 'blockera_name_utils_get_metadata' ) ) {
     function blockera_name_utils_get_metadata(): array {
         return [
-            'version'     => '1.0.0',
+            'version'     => '2.0.0',
             'loaded_from' => 'plugin-b',
             'file'        => __FILE__,
-            'scenario'    => 'patch-version-diff',
+            'scenario'    => 'plugin-b-newer',
         ];
     }
 }
+
+// v2.0.0 exclusive feature
+if ( ! function_exists( 'blockera_format_name' ) ) {
+    function blockera_format_name( string $name ): string {
+        return ucwords( strtolower( $name ) );
+    }
+}
+
