@@ -457,8 +457,9 @@ jobs:
           " 2>&1)
           
           # Extract only the actual result line (version|plugin or ERROR:)
-          # Filter out wp-env verbose output lines
-          RESULT=$(echo "$RAW_OUTPUT" | grep -E "^(ERROR:|[0-9]+\.[0-9]+\.[0-9]+\|plugin-[ab])" | head -1)
+          # Filter out wp-env verbose output lines (Starting, Ran, on the cli container, etc.)
+          # Match lines that contain version|plugin pattern or ERROR: at start
+          RESULT=$(echo "$RAW_OUTPUT" | grep -vE "(Starting|Ran|on the cli container|in [0-9]+s)" | grep -E "(ERROR:|[0-9]+\.[0-9]+\.[0-9]+\|plugin-[ab])" | head -1 | tr -d '\r\n' | xargs)
           
           echo "Raw output length: ${#RAW_OUTPUT} characters"
           echo "Extracted result: '$RESULT'"
@@ -504,17 +505,25 @@ jobs:
             exit 1
           fi
           
-          set -e  # Re-enable exit on error
-          
           # Extract version and loaded_from from the clean result
           # Result format: "3.0.0|plugin-a"
           if echo "$RESULT" | grep -qE '[0-9]+\.[0-9]+\.[0-9]+\|plugin-[ab]'; then
-            VERSION=$(echo "$RESULT" | cut -d'|' -f1)
-            LOADED_FROM=$(echo "$RESULT" | cut -d'|' -f2)
+            VERSION=$(echo "$RESULT" | cut -d'|' -f1 | xargs)
+            LOADED_FROM=$(echo "$RESULT" | cut -d'|' -f2 | xargs)
+            
+            # Validate extracted values
+            if [ -z "$VERSION" ] || [ -z "$LOADED_FROM" ]; then
+              echo "ERROR: Could not extract version or loaded_from from result: '$RESULT'"
+              echo "Full raw output:"
+              echo "$RAW_OUTPUT"
+              echo "test_passed=false" >> $GITHUB_OUTPUT
+              exit 1
+            fi
           else
             echo "ERROR: Could not parse result: '$RESULT'"
             echo "Full raw output:"
             echo "$RAW_OUTPUT"
+            echo "test_passed=false" >> $GITHUB_OUTPUT
             exit 1
           fi
           
@@ -532,6 +541,7 @@ jobs:
             echo "Version: $VERSION (expected: $EXPECTED_VERSION)"
             echo "Loaded from: $LOADED_FROM (expected: $EXPECTED_WINNER)"
             echo "test_passed=true" >> $GITHUB_OUTPUT
+            exit 0
           else
             echo "FAILURE: Version resolution incorrect!"
             echo "Got version: $VERSION (expected: $EXPECTED_VERSION)"
