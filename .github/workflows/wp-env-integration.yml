@@ -211,48 +211,27 @@ jobs:
       - name: Test version resolution
         id: version-test
         run: |
-          set -e
-          RAW_OUTPUT=$(npx --yes @wordpress/env run cli wp eval "
+          npx --yes @wordpress/env run cli wp eval "
             if (!function_exists('blockera_name_utils_get_version')) {
-              echo 'ERROR:MISSING_VERSION_FUNCTION';
+              echo 'ERROR: blockera_name_utils_get_version function missing';
               exit(1);
             }
             if (!function_exists('blockera_name_utils_get_loaded_from')) {
-              echo 'ERROR:MISSING_LOADED_FROM_FUNCTION';
+              echo 'ERROR: blockera_name_utils_get_loaded_from function missing';
               exit(1);
             }
             \$version = blockera_name_utils_get_version();
             \$loaded_from = blockera_name_utils_get_loaded_from();
-            echo \$version . '|' . \$loaded_from;
-          " 2>&1)
-          
-          RESULT=$(echo "$RAW_OUTPUT" | grep -E "(ERROR:|[0-9]+\.[0-9]+\.[0-9]+\|plugin-[ab])" | grep -vE "(Starting|Ran|on the cli|in [0-9]+s)" | head -1 | tr -d '\r\n' | xargs)
-          
-          if [ -z "$RESULT" ] || echo "$RESULT" | grep -qE "^ERROR:"; then
-            echo "ERROR: Helper functions missing"
-            echo "Raw output: $RAW_OUTPUT"
-            exit 1
-          fi
-          
-          VERSION=$(echo "$RESULT" | cut -d'|' -f1 | xargs)
-          LOADED_FROM=$(echo "$RESULT" | cut -d'|' -f2 | xargs)
-          
-          if [ -z "$VERSION" ] || [ -z "$LOADED_FROM" ]; then
-            echo "ERROR: Could not parse result: $RESULT"
-            exit 1
-          fi
-          
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "loaded_from=$LOADED_FROM" >> $GITHUB_OUTPUT
-          
-          if [ "$VERSION" != "${{ matrix.expected_version }}" ] || [ "$LOADED_FROM" != "${{ matrix.expected_winner }}" ]; then
-            echo "ERROR: Version resolution failed"
-            echo "Expected: ${{ matrix.expected_version }} from ${{ matrix.expected_winner }}"
-            echo "Got: $VERSION from $LOADED_FROM"
-            exit 1
-          fi
-          
-          echo "Version resolution correct: $VERSION from $LOADED_FROM"
+            \$expected_version = '${{ matrix.expected_version }}';
+            \$expected_winner = '${{ matrix.expected_winner }}';
+            if (\$version !== \$expected_version || \$loaded_from !== \$expected_winner) {
+              echo 'ERROR: Version resolution failed';
+              echo 'Expected: ' . \$expected_version . ' from ' . \$expected_winner;
+              echo 'Got: ' . \$version . ' from ' . \$loaded_from;
+              exit(1);
+            }
+            echo 'Version resolution correct: ' . \$version . ' from ' . \$loaded_from;
+          "
 
       - name: Verify homepage rendering
         run: |
