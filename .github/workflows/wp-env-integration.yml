@@ -181,11 +181,21 @@ jobs:
           if [ -f "plugin-a/composer.json" ]; then
             echo "Installing dependencies for plugin-a..."
             cd plugin-a
+            # First install dependencies
             composer install --no-interaction --quiet 2>&1 || {
               echo "ERROR: Failed to install dependencies for plugin-a"
               exit 1
             }
-            echo "✓ Plugin A dependencies installed"
+            # Force regenerate autoload to pick up fixture changes
+            echo "Regenerating autoload files for plugin-a..."
+            composer dump-autoload --no-interaction --optimize 2>&1 || {
+              echo "WARNING: composer dump-autoload failed, trying without optimize..."
+              composer dump-autoload --no-interaction 2>&1 || {
+                echo "ERROR: Failed to regenerate autoload for plugin-a"
+                exit 1
+              }
+            }
+            echo "✓ Plugin A dependencies installed and autoload regenerated"
             cd ..
           fi
           
@@ -193,17 +203,40 @@ jobs:
           if [ -f "plugin-b/composer.json" ]; then
             echo "Installing dependencies for plugin-b..."
             cd plugin-b
+            # First install dependencies
             composer install --no-interaction --quiet 2>&1 || {
               echo "ERROR: Failed to install dependencies for plugin-b"
               exit 1
             }
-            echo "✓ Plugin B dependencies installed"
+            # Force regenerate autoload to pick up fixture changes
+            echo "Regenerating autoload files for plugin-b..."
+            composer dump-autoload --no-interaction --optimize 2>&1 || {
+              echo "WARNING: composer dump-autoload failed, trying without optimize..."
+              composer dump-autoload --no-interaction 2>&1 || {
+                echo "ERROR: Failed to regenerate autoload for plugin-b"
+                exit 1
+              }
+            }
+            echo "✓ Plugin B dependencies installed and autoload regenerated"
             cd ..
           fi
           
           echo "Verifying autoload files were generated..."
           if [ -f "plugin-a/vendor/composer/autoload_files.php" ]; then
             echo "✓ plugin-a autoload_files.php exists"
+            echo "Checking if functions.php is in autoload_files.php..."
+            if grep -q "functions.php" plugin-a/vendor/composer/autoload_files.php; then
+              echo "✓ functions.php found in plugin-a autoload_files.php"
+              echo "Extracting file path from autoload_files.php..."
+              grep -o "['\"][^'\"]*functions\.php[^'\"]*['\"]" plugin-a/vendor/composer/autoload_files.php | head -1 || echo "Could not extract path"
+            else
+              echo "✗ ERROR: functions.php NOT found in plugin-a autoload_files.php"
+              echo "Contents of autoload_files.php:"
+              cat plugin-a/vendor/composer/autoload_files.php | head -30
+              echo ""
+              echo "This means Composer did not include functions.php in autoload!"
+              exit 1
+            fi
           else
             echo "✗ ERROR: plugin-a autoload_files.php missing!"
             exit 1
@@ -211,6 +244,19 @@ jobs:
           
           if [ -f "plugin-b/vendor/composer/autoload_files.php" ]; then
             echo "✓ plugin-b autoload_files.php exists"
+            echo "Checking if functions.php is in autoload_files.php..."
+            if grep -q "functions.php" plugin-b/vendor/composer/autoload_files.php; then
+              echo "✓ functions.php found in plugin-b autoload_files.php"
+              echo "Extracting file path from autoload_files.php..."
+              grep -o "['\"][^'\"]*functions\.php[^'\"]*['\"]" plugin-b/vendor/composer/autoload_files.php | head -1 || echo "Could not extract path"
+            else
+              echo "✗ ERROR: functions.php NOT found in plugin-b autoload_files.php"
+              echo "Contents of autoload_files.php:"
+              cat plugin-b/vendor/composer/autoload_files.php | head -30
+              echo ""
+              echo "This means Composer did not include functions.php in autoload!"
+              exit 1
+            fi
           else
             echo "✗ ERROR: plugin-b autoload_files.php missing!"
             exit 1
@@ -247,6 +293,26 @@ jobs:
         run: |
           npx wp-env run cli wp plugin activate plugin-a plugin-b
           npx wp-env run cli wp plugin list
+
+      - name: Verify autoload files are accessible in container
+        run: |
+          echo "Checking if autoload files exist in container..."
+          npx wp-env run cli ls -la /var/www/html/wp-content/plugins/plugin-a/vendor/composer/autoload_files.php 2>&1 || echo "plugin-a autoload_files.php not found"
+          npx wp-env run cli ls -la /var/www/html/wp-content/plugins/plugin-b/vendor/composer/autoload_files.php 2>&1 || echo "plugin-b autoload_files.php not found"
+          
+          echo ""
+          echo "Checking if functions.php files exist in container..."
+          npx wp-env run cli ls -la /var/www/html/wp-content/plugins/plugin-a/packages/name-utils/php/functions.php 2>&1 || echo "plugin-a functions.php not found"
+          npx wp-env run cli ls -la /var/www/html/wp-content/plugins/plugin-b/packages/name-utils/php/functions.php 2>&1 || echo "plugin-b functions.php not found"
+
+      - name: Check autoload files content in container
+        run: |
+          echo "Checking plugin-a autoload_files.php content..."
+          npx wp-env run cli grep -o "functions.php" /var/www/html/wp-content/plugins/plugin-a/vendor/composer/autoload_files.php 2>&1 | head -5 || echo "functions.php not found in autoload_files.php"
+          
+          echo ""
+          echo "Checking plugin-b autoload_files.php content..."
+          npx wp-env run cli grep -o "functions.php" /var/www/html/wp-content/plugins/plugin-b/vendor/composer/autoload_files.php 2>&1 | head -5 || echo "functions.php not found in autoload_files.php"
 
       - name: Verify autoloader-coordinator is loaded
         run: |
@@ -293,11 +359,82 @@ jobs:
             echo PHP_EOL . 'Both plugins registered successfully!';
           "
 
+      - name: Clear coordinator cache and force reload
+        run: |
+          echo "Clearing coordinator cache and forcing file reload..."
+          npx wp-env run cli wp eval "
+            // Clear all coordinator caches
+            delete_transient('blockera_pkgs_files');
+            delete_transient('blockera_pkg_manifest');
+            
+            // Clear static memoization by getting fresh instance
+            \$coordinator = \Blockera\SharedAutoload\Coordinator::getInstance();
+            
+            // Use reflection to clear private properties if needed
+            \$reflection = new ReflectionClass(\$coordinator);
+            
+            // Force coordinator to reload files
+            // The coordinator should reload on next request, but let's try to trigger it
+            echo 'Cache cleared, coordinator instance obtained' . PHP_EOL;
+            
+            // Check autoload manifest
+            \$autoload_a = '/var/www/html/wp-content/plugins/plugin-a/vendor/composer/autoload_files.php';
+            \$autoload_b = '/var/www/html/wp-content/plugins/plugin-b/vendor/composer/autoload_files.php';
+            
+            if (file_exists(\$autoload_a)) {
+              \$content_a = file_get_contents(\$autoload_a);
+              echo 'Plugin A autoload_files.php size: ' . strlen(\$content_a) . ' bytes' . PHP_EOL;
+              if (strpos(\$content_a, 'functions.php') !== false) {
+                echo '✓ functions.php found in plugin-a autoload_files.php' . PHP_EOL;
+                // Extract the file path
+                if (preg_match('/[\'\"]([^\'\"]*functions\.php[^\'\"]*)[\'\"]/', \$content_a, \$matches)) {
+                  echo '  File path in autoload: ' . \$matches[1] . PHP_EOL;
+                  \$full_path = '/var/www/html/wp-content/plugins/plugin-a/' . ltrim(\$matches[1], '/');
+                  echo '  Full path: ' . \$full_path . PHP_EOL;
+                  echo '  File exists: ' . (file_exists(\$full_path) ? 'YES' : 'NO') . PHP_EOL;
+                  if (file_exists(\$full_path) && !function_exists('blockera_name_utils_get_version')) {
+                    echo '  Attempting to require file...' . PHP_EOL;
+                    require_once \$full_path;
+                    echo '  Function exists after require: ' . (function_exists('blockera_name_utils_get_version') ? 'YES' : 'NO') . PHP_EOL;
+                  }
+                }
+              } else {
+                echo '✗ functions.php NOT found in plugin-a autoload_files.php' . PHP_EOL;
+                echo 'First 500 chars of autoload_files.php:' . PHP_EOL;
+                echo substr(\$content_a, 0, 500) . PHP_EOL;
+              }
+            } else {
+              echo '✗ Plugin A autoload_files.php does not exist!' . PHP_EOL;
+            }
+            
+            echo PHP_EOL . 'Current function status:' . PHP_EOL;
+            echo 'blockera_name_utils_get_version: ' . (function_exists('blockera_name_utils_get_version') ? 'EXISTS' : 'MISSING') . PHP_EOL;
+            echo 'blockera_name_utils_get_loaded_from: ' . (function_exists('blockera_name_utils_get_loaded_from') ? 'EXISTS' : 'MISSING') . PHP_EOL;
+          " 2>&1
+
       - name: Test version resolution
         id: version-test
         run: |
           echo "Testing version resolution for scenario: ${{ matrix.scenario_name }}"
           echo "Expected: version=${{ matrix.expected_version }}, loaded_from=${{ matrix.expected_winner }}"
+          
+          # First, try to manually trigger coordinator to include files
+          echo "Attempting to force coordinator to include files..."
+          npx wp-env run cli wp eval "
+            // Get coordinator and try to force file inclusion
+            \$coordinator = \Blockera\SharedAutoload\Coordinator::getInstance();
+            
+            // Use reflection to access private method (for debugging)
+            try {
+              \$reflection = new ReflectionClass(\$coordinator);
+              \$method = \$reflection->getMethod('includeAutoloadFiles');
+              \$method->setAccessible(true);
+              \$method->invoke(\$coordinator);
+              echo 'Forced coordinator to include autoload files' . PHP_EOL;
+            } catch (Exception \$e) {
+              echo 'Could not force file inclusion: ' . \$e->getMessage() . PHP_EOL;
+            }
+          " 2>&1 || echo "Could not force file inclusion (this is OK)"
           
           RESULT=$(npx wp-env run cli wp eval "
             if (!function_exists('blockera_name_utils_get_version')) {
@@ -510,17 +647,17 @@ jobs:
         run: |
           echo "Installing dependencies for plugins..."
           
-          cd plugin-a && composer install --no-interaction --quiet && cd .. || {
+          cd plugin-a && composer install --no-interaction --quiet && composer dump-autoload --no-interaction --optimize && cd .. || {
             echo "ERROR: Failed to install dependencies for plugin-a"
             exit 1
           }
           
-          cd plugin-b && composer install --no-interaction --quiet && cd .. || {
+          cd plugin-b && composer install --no-interaction --quiet && composer dump-autoload --no-interaction --optimize && cd .. || {
             echo "ERROR: Failed to install dependencies for plugin-b"
             exit 1
           }
           
-          echo "Plugin dependencies installed and autoload files generated!"
+          echo "Plugin dependencies installed and autoload files regenerated!"
 
       - name: Update wp-env for WordPress version
         if: matrix.wp != 'latest'
