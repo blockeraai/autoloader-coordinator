@@ -438,7 +438,8 @@ jobs:
             }
           " 2>&1 || echo "Could not force file inclusion (this is OK)"
           
-          RESULT=$(npx wp-env run cli wp eval "
+          # Run the eval and capture output
+          RAW_OUTPUT=$(npx wp-env run cli wp eval "
             if (!function_exists('blockera_name_utils_get_version')) {
               echo 'ERROR:MISSING_VERSION_FUNCTION';
               exit(0);
@@ -455,9 +456,15 @@ jobs:
             echo \$version . '|' . \$loaded_from;
           " 2>&1)
           
-          echo "Raw result: $RESULT"
+          # Extract only the actual result line (version|plugin or ERROR:)
+          # Filter out wp-env verbose output lines
+          RESULT=$(echo "$RAW_OUTPUT" | grep -E "^(ERROR:|[0-9]+\.[0-9]+\.[0-9]+\|plugin-[ab])" | head -1)
           
-          if echo "$RESULT" | grep -q "ERROR:"; then
+          echo "Raw output length: ${#RAW_OUTPUT} characters"
+          echo "Extracted result: '$RESULT'"
+          
+          # Check if result is empty or contains ERROR
+          if [ -z "$RESULT" ] || echo "$RESULT" | grep -qE "^ERROR:"; then
             echo ""
             echo "=========================================="
             echo "ERROR: Helper function missing!"
@@ -491,13 +498,25 @@ jobs:
             " 2>&1 || echo "Could not get coordinator instance"
             
             echo "test_passed=false" >> $GITHUB_OUTPUT
+            echo ""
+            echo "Full raw output for debugging:"
+            echo "$RAW_OUTPUT"
             exit 1
           fi
           
           set -e  # Re-enable exit on error
           
-          VERSION=$(echo "$RESULT" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | tail -1)
-          LOADED_FROM=$(echo "$RESULT" | grep -oE 'plugin-[ab]' | tail -1)
+          # Extract version and loaded_from from the clean result
+          # Result format: "3.0.0|plugin-a"
+          if echo "$RESULT" | grep -qE '[0-9]+\.[0-9]+\.[0-9]+\|plugin-[ab]'; then
+            VERSION=$(echo "$RESULT" | cut -d'|' -f1)
+            LOADED_FROM=$(echo "$RESULT" | cut -d'|' -f2)
+          else
+            echo "ERROR: Could not parse result: '$RESULT'"
+            echo "Full raw output:"
+            echo "$RAW_OUTPUT"
+            exit 1
+          fi
           
           echo "Detected version: $VERSION"
           echo "Loaded from: $LOADED_FROM"
