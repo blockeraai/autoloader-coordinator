@@ -443,6 +443,28 @@ jobs:
           cp ".github/fixtures/scenarios/plugin-a-newer/plugin-b/composer.json" plugin-b/packages/name-utils/composer.json
           cp ".github/fixtures/scenarios/plugin-a-newer/plugin-b/php/functions.php" plugin-b/packages/name-utils/php/functions.php
 
+      - name: Regenerate Composer autoload files after fixtures
+        run: |
+          echo "Regenerating autoload files for plugins..."
+          
+          # Plugin A
+          if [ -f "plugin-a/composer.json" ]; then
+            echo "Regenerating autoload for plugin-a..."
+            cd plugin-a
+            composer dump-autoload --no-interaction --quiet || echo "Warning: composer dump-autoload failed for plugin-a"
+            cd ..
+          fi
+          
+          # Plugin B
+          if [ -f "plugin-b/composer.json" ]; then
+            echo "Regenerating autoload for plugin-b..."
+            cd plugin-b
+            composer dump-autoload --no-interaction --quiet || echo "Warning: composer dump-autoload failed for plugin-b"
+            cd ..
+          fi
+          
+          echo "Autoload files regenerated!"
+
       - name: Install Composer dependencies
         run: composer install --prefer-dist --no-interaction --no-progress
 
