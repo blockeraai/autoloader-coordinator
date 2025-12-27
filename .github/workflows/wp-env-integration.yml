@@ -157,6 +157,22 @@ jobs:
           
           echo "Fixture versions verified!"
 
+      - name: Setup autoloader-coordinator for CI (before plugin install)
+        run: |
+          echo "Copying autoloader-coordinator to plugins (required for path repository)..."
+          
+          rm -rf plugin-a/packages/autoloader-coordinator
+          rm -rf plugin-b/packages/autoloader-coordinator
+          
+          cp -r packages/autoloader-coordinator plugin-a/packages/autoloader-coordinator
+          cp -r packages/autoloader-coordinator plugin-b/packages/autoloader-coordinator
+          
+          echo "Verifying autoloader-coordinator is in place..."
+          ls -la plugin-a/packages/autoloader-coordinator/ | head -5
+          ls -la plugin-b/packages/autoloader-coordinator/ | head -5
+          
+          echo "Autoloader-coordinator copied successfully!"
+
       - name: Install plugin dependencies and regenerate autoload
         run: |
           echo "Installing dependencies for plugins and regenerating autoload files..."
@@ -201,22 +217,6 @@ jobs:
           fi
           
           echo "All autoload files generated successfully!"
-
-      - name: Setup autoloader-coordinator for CI
-        run: |
-          echo "Copying autoloader-coordinator to plugins (symlinks don't work in Docker)..."
-          
-          rm -rf plugin-a/packages/autoloader-coordinator
-          rm -rf plugin-b/packages/autoloader-coordinator
-          
-          cp -r packages/autoloader-coordinator plugin-a/packages/autoloader-coordinator
-          cp -r packages/autoloader-coordinator plugin-b/packages/autoloader-coordinator
-          
-          echo "Verifying autoloader-coordinator is in place..."
-          ls -la plugin-a/packages/autoloader-coordinator/ | head -5
-          ls -la plugin-b/packages/autoloader-coordinator/ | head -5
-          
-          echo "Autoloader-coordinator copied successfully!"
 
       - name: Start wp-env
         run: npx wp-env start --update
@@ -497,6 +497,15 @@ jobs:
           cp ".github/fixtures/scenarios/plugin-a-newer/plugin-b/composer.json" plugin-b/packages/name-utils/composer.json
           cp ".github/fixtures/scenarios/plugin-a-newer/plugin-b/php/functions.php" plugin-b/packages/name-utils/php/functions.php
 
+      - name: Setup autoloader-coordinator for CI (before plugin install)
+        run: |
+          echo "Copying autoloader-coordinator to plugins (required for path repository)..."
+          rm -rf plugin-a/packages/autoloader-coordinator
+          rm -rf plugin-b/packages/autoloader-coordinator
+          cp -r packages/autoloader-coordinator plugin-a/packages/autoloader-coordinator
+          cp -r packages/autoloader-coordinator plugin-b/packages/autoloader-coordinator
+          echo "Done!"
+
       - name: Install plugin dependencies and regenerate autoload
         run: |
           echo "Installing dependencies for plugins..."
@@ -512,15 +521,6 @@ jobs:
           }
           
           echo "Plugin dependencies installed and autoload files generated!"
-
-      - name: Setup autoloader-coordinator for CI
-        run: |
-          echo "Copying autoloader-coordinator to plugins..."
-          rm -rf plugin-a/packages/autoloader-coordinator
-          rm -rf plugin-b/packages/autoloader-coordinator
-          cp -r packages/autoloader-coordinator plugin-a/packages/autoloader-coordinator
-          cp -r packages/autoloader-coordinator plugin-b/packages/autoloader-coordinator
-          echo "Done!"
 
       - name: Update wp-env for WordPress version
         if: matrix.wp != 'latest'
