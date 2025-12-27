@@ -157,8 +157,23 @@ jobs:
       - name: Install npm dependencies
         run: npm install
 
-      - name: Setup autoloader-coordinator symlinks
-        run: npm run setup
+      - name: Setup autoloader-coordinator for CI
+        run: |
+          echo "Copying autoloader-coordinator to plugins (symlinks don't work in Docker)..."
+          
+          # Remove any existing symlinks or directories
+          rm -rf plugin-a/packages/autoloader-coordinator
+          rm -rf plugin-b/packages/autoloader-coordinator
+          
+          # Copy the autoloader-coordinator package to each plugin
+          cp -r packages/autoloader-coordinator plugin-a/packages/autoloader-coordinator
+          cp -r packages/autoloader-coordinator plugin-b/packages/autoloader-coordinator
+          
+          echo "Verifying autoloader-coordinator is in place..."
+          ls -la plugin-a/packages/autoloader-coordinator/
+          ls -la plugin-b/packages/autoloader-coordinator/
+          
+          echo "Autoloader-coordinator copied successfully!"
 
       - name: Start wp-env
         run: npx wp-env start --update
@@ -434,8 +449,14 @@ jobs:
       - name: Install npm dependencies
         run: npm install
 
-      - name: Setup autoloader-coordinator symlinks
-        run: npm run setup
+      - name: Setup autoloader-coordinator for CI
+        run: |
+          echo "Copying autoloader-coordinator to plugins..."
+          rm -rf plugin-a/packages/autoloader-coordinator
+          rm -rf plugin-b/packages/autoloader-coordinator
+          cp -r packages/autoloader-coordinator plugin-a/packages/autoloader-coordinator
+          cp -r packages/autoloader-coordinator plugin-b/packages/autoloader-coordinator
+          echo "Done!"
 
       - name: Update wp-env for WordPress version
         if: matrix.wp != 'latest'
