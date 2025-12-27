@@ -439,6 +439,7 @@ jobs:
           " 2>&1 || echo "Could not force file inclusion (this is OK)"
           
           # Run the eval and capture output
+          set +e  # Don't exit on error
           RAW_OUTPUT=$(npx wp-env run cli wp eval "
             if (!function_exists('blockera_name_utils_get_version')) {
               echo 'ERROR:MISSING_VERSION_FUNCTION';
@@ -455,6 +456,14 @@ jobs:
             
             echo \$version . '|' . \$loaded_from;
           " 2>&1)
+          EVAL_EXIT_CODE=$?
+          set -e  # Re-enable exit on error
+          
+          # If wp eval command itself failed, capture that
+          if [ $EVAL_EXIT_CODE -ne 0 ]; then
+            echo "wp eval command failed with exit code: $EVAL_EXIT_CODE"
+            echo "Raw output: $RAW_OUTPUT"
+          fi
           
           # Extract only the actual result line (version|plugin or ERROR:)
           # Filter out wp-env verbose output lines (Starting, Ran, on the cli container, etc.)
