@@ -106,6 +106,12 @@ jobs:
             ${{ runner.os }}-composer-8.2-
             ${{ runner.os }}-composer-
 
+      - name: Install root Composer dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Install npm dependencies
+        run: npm install
+
       - name: Install scenario fixtures
         run: |
           SCENARIO="${{ matrix.scenario_name }}"
@@ -151,27 +157,64 @@ jobs:
           
           echo "Fixture versions verified!"
 
-      - name: Install Composer dependencies
-        run: composer install --prefer-dist --no-interaction --no-progress
-
-      - name: Install npm dependencies
-        run: npm install
+      - name: Install plugin dependencies and regenerate autoload
+        run: |
+          echo "Installing dependencies for plugins and regenerating autoload files..."
+          
+          # Plugin A
+          if [ -f "plugin-a/composer.json" ]; then
+            echo "Installing dependencies for plugin-a..."
+            cd plugin-a
+            composer install --no-interaction --quiet 2>&1 || {
+              echo "ERROR: Failed to install dependencies for plugin-a"
+              exit 1
+            }
+            echo "✓ Plugin A dependencies installed"
+            cd ..
+          fi
+          
+          # Plugin B
+          if [ -f "plugin-b/composer.json" ]; then
+            echo "Installing dependencies for plugin-b..."
+            cd plugin-b
+            composer install --no-interaction --quiet 2>&1 || {
+              echo "ERROR: Failed to install dependencies for plugin-b"
+              exit 1
+            }
+            echo "✓ Plugin B dependencies installed"
+            cd ..
+          fi
+          
+          echo "Verifying autoload files were generated..."
+          if [ -f "plugin-a/vendor/composer/autoload_files.php" ]; then
+            echo "✓ plugin-a autoload_files.php exists"
+          else
+            echo "✗ ERROR: plugin-a autoload_files.php missing!"
+            exit 1
+          fi
+          
+          if [ -f "plugin-b/vendor/composer/autoload_files.php" ]; then
+            echo "✓ plugin-b autoload_files.php exists"
+          else
+            echo "✗ ERROR: plugin-b autoload_files.php missing!"
+            exit 1
+          fi
+          
+          echo "All autoload files generated successfully!"
 
       - name: Setup autoloader-coordinator for CI
         run: |
           echo "Copying autoloader-coordinator to plugins (symlinks don't work in Docker)..."
           
-          # Remove any existing symlinks or directories
           rm -rf plugin-a/packages/autoloader-coordinator
           rm -rf plugin-b/packages/autoloader-coordinator
           
-          # Copy the autoloader-coordinator package to each plugin
           cp -r packages/autoloader-coordinator plugin-a/packages/autoloader-coordinator
           cp -r packages/autoloader-coordinator plugin-b/packages/autoloader-coordinator
           
           echo "Verifying autoloader-coordinator is in place..."
-          ls -la plugin-a/packages/autoloader-coordinator/
-          ls -la plugin-b/packages/autoloader-coordinator/
+          ls -la plugin-a/packages/autoloader-coordinator/ | head -5
+          ls -la plugin-b/packages/autoloader-coordinator/ | head -5
           
           echo "Autoloader-coordinator copied successfully!"
 
@@ -368,6 +411,11 @@ jobs:
           npx wp-env run cli cat /var/www/html/wp-content/plugins/plugin-b/packages/name-utils/php/functions.php 2>/dev/null | head -30 || echo "Could not read functions.php"
           
           echo ""
+          echo "=== Check autoload files ==="
+          npx wp-env run cli cat /var/www/html/wp-content/plugins/plugin-a/vendor/composer/autoload_files.php 2>/dev/null | head -20 || echo "Could not read plugin-a autoload_files.php"
+          npx wp-env run cli cat /var/www/html/wp-content/plugins/plugin-b/vendor/composer/autoload_files.php 2>/dev/null | head -20 || echo "Could not read plugin-b autoload_files.php"
+          
+          echo ""
           echo "=== Test if function exists directly ==="
           npx wp-env run cli wp eval "var_dump(function_exists('blockera_name_utils_get_version'));" 2>&1 || echo "Could not check function"
 
@@ -435,6 +483,12 @@ jobs:
             ${{ runner.os }}-composer-${{ matrix.php }}-
             ${{ runner.os }}-composer-
 
+      - name: Install root Composer dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Install npm dependencies
+        run: npm install
+
       - name: Install scenario fixtures
         run: |
           echo "Installing plugin-a-newer scenario for compatibility test..."
@@ -443,33 +497,21 @@ jobs:
           cp ".github/fixtures/scenarios/plugin-a-newer/plugin-b/composer.json" plugin-b/packages/name-utils/composer.json
           cp ".github/fixtures/scenarios/plugin-a-newer/plugin-b/php/functions.php" plugin-b/packages/name-utils/php/functions.php
 
-      - name: Regenerate Composer autoload files after fixtures
+      - name: Install plugin dependencies and regenerate autoload
         run: |
-          echo "Regenerating autoload files for plugins..."
+          echo "Installing dependencies for plugins..."
           
-          # Plugin A
-          if [ -f "plugin-a/composer.json" ]; then
-            echo "Regenerating autoload for plugin-a..."
-            cd plugin-a
-            composer dump-autoload --no-interaction --quiet || echo "Warning: composer dump-autoload failed for plugin-a"
-            cd ..
-          fi
+          cd plugin-a && composer install --no-interaction --quiet && cd .. || {
+            echo "ERROR: Failed to install dependencies for plugin-a"
+            exit 1
+          }
           
-          # Plugin B
-          if [ -f "plugin-b/composer.json" ]; then
-            echo "Regenerating autoload for plugin-b..."
-            cd plugin-b
-            composer dump-autoload --no-interaction --quiet || echo "Warning: composer dump-autoload failed for plugin-b"
-            cd ..
-          fi
+          cd plugin-b && composer install --no-interaction --quiet && cd .. || {
+            echo "ERROR: Failed to install dependencies for plugin-b"
+            exit 1
+          }
           
-          echo "Autoload files regenerated!"
-
-      - name: Install Composer dependencies
-        run: composer install --prefer-dist --no-interaction --no-progress
-
-      - name: Install npm dependencies
-        run: npm install
+          echo "Plugin dependencies installed and autoload files generated!"
 
       - name: Setup autoloader-coordinator for CI
         run: |
@@ -737,7 +779,6 @@ jobs:
               issue_number: prNumber,
             });
 
-            // Find existing bot comments
             const warningComment = comments.find(comment => 
               comment.user.type === 'Bot' && 
               comment.body.includes('Autoloader Coordinator - Version Resolution Warning')
@@ -749,7 +790,6 @@ jobs:
             );
 
             if (warningComment) {
-              // Update existing warning comment to success
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -758,7 +798,6 @@ jobs:
               });
               console.log('Updated existing warning comment to show success');
             } else if (successComment) {
-              // Update existing success comment
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -767,7 +806,6 @@ jobs:
               });
               console.log('Updated existing success comment');
             } else {
-              // Create new success comment
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
