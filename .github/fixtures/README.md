@@ -11,42 +11,24 @@ fixtures/
     ├── plugin-a-newer/       # Plugin A has v2.0.0, Plugin B has v1.0.0
     │   ├── plugin-a/
     │   │   ├── composer.json
-    │   │   └── functions.php
+    │   │   └── php/
+    │   │       └── functions.php
     │   └── plugin-b/
     │       ├── composer.json
-    │       └── functions.php
+    │       └── php/
+    │           └── functions.php
     │
     ├── plugin-b-newer/       # Plugin A has v1.0.0, Plugin B has v2.0.0
-    │   ├── plugin-a/
-    │   │   ├── composer.json
-    │   │   └── functions.php
-    │   └── plugin-b/
-    │       ├── composer.json
-    │       └── functions.php
+    │   └── ... (same structure)
     │
     ├── same-version/         # Both have v1.0.0 (tests default/priority)
-    │   ├── plugin-a/
-    │   │   ├── composer.json
-    │   │   └── functions.php
-    │   └── plugin-b/
-    │       ├── composer.json
-    │       └── functions.php
+    │   └── ...
     │
     ├── major-version-diff/   # Plugin A has v3.0.0, Plugin B has v1.0.0
-    │   ├── plugin-a/
-    │   │   ├── composer.json
-    │   │   └── functions.php
-    │   └── plugin-b/
-    │       ├── composer.json
-    │       └── functions.php
+    │   └── ...
     │
     └── patch-version-diff/   # Plugin A has v1.0.0, Plugin B has v1.0.1
-        ├── plugin-a/
-        │   ├── composer.json
-        │   └── functions.php
-        └── plugin-b/
-            ├── composer.json
-            └── functions.php
+        └── ...
 ```
 
 ## Scenarios
@@ -63,33 +45,19 @@ fixtures/
 
 The CI workflow uses GitHub Actions matrix strategy to run each scenario:
 
-1. **Matrix Definition**: Each scenario is defined in the workflow matrix with:
-   - `scenario`: The scenario directory name
-   - `plugin_a_version`: Expected version in plugin-a
-   - `plugin_b_version`: Expected version in plugin-b
-   - `expected_winner`: Which plugin should provide the loaded package
-   - `expected_version`: The version that should be loaded
-
-2. **Fixture Installation**: For each scenario, the workflow:
+1. **Matrix Definition**: Each scenario is defined in the workflow matrix
+2. **Fixture Installation**: For each scenario, the workflow copies fixtures over plugin files:
    ```bash
    # Override plugin-a files
    cp .github/fixtures/scenarios/$SCENARIO/plugin-a/composer.json plugin-a/packages/name-utils/composer.json
-   cp .github/fixtures/scenarios/$SCENARIO/plugin-a/functions.php plugin-a/packages/name-utils/php/functions.php
+   cp .github/fixtures/scenarios/$SCENARIO/plugin-a/php/functions.php plugin-a/packages/name-utils/php/functions.php
    
    # Override plugin-b files
    cp .github/fixtures/scenarios/$SCENARIO/plugin-b/composer.json plugin-b/packages/name-utils/composer.json
-   cp .github/fixtures/scenarios/$SCENARIO/plugin-b/functions.php plugin-b/packages/name-utils/php/functions.php
+   cp .github/fixtures/scenarios/$SCENARIO/plugin-b/php/functions.php plugin-b/packages/name-utils/php/functions.php
    ```
 
-3. **Verification**: The workflow then verifies:
-   ```php
-   $version = blockera_name_utils_get_version();
-   $loaded_from = blockera_name_utils_get_loaded_from();
-   
-   // Must match expected values from matrix
-   assert($version === $expected_version);
-   assert($loaded_from === $expected_winner);
-   ```
+3. **Verification**: The workflow verifies the correct version is loaded
 
 ## Helper Functions
 
@@ -107,11 +75,13 @@ Each fixture includes these functions:
    ```
    scenarios/your-scenario-name/
    ├── plugin-a/
-   │   ├── composer.json  (with desired version)
-   │   └── functions.php  (with version helpers)
+   │   ├── composer.json
+   │   └── php/
+   │       └── functions.php
    └── plugin-b/
-       ├── composer.json  (with desired version)
-       └── functions.php  (with version helpers)
+       ├── composer.json
+       └── php/
+           └── functions.php
    ```
 
 2. Add the scenario to the workflow matrix in `.github/workflows/wp-env-integration.yml`

@@ -118,11 +118,11 @@ jobs:
           
           echo "Installing plugin-a fixtures..."
           cp ".github/fixtures/scenarios/$SCENARIO/plugin-a/composer.json" plugin-a/packages/name-utils/composer.json
-          cp ".github/fixtures/scenarios/$SCENARIO/plugin-a/functions.php" plugin-a/packages/name-utils/php/functions.php
+          cp ".github/fixtures/scenarios/$SCENARIO/plugin-a/php/functions.php" plugin-a/packages/name-utils/php/functions.php
           
           echo "Installing plugin-b fixtures..."
           cp ".github/fixtures/scenarios/$SCENARIO/plugin-b/composer.json" plugin-b/packages/name-utils/composer.json
-          cp ".github/fixtures/scenarios/$SCENARIO/plugin-b/functions.php" plugin-b/packages/name-utils/php/functions.php
+          cp ".github/fixtures/scenarios/$SCENARIO/plugin-b/php/functions.php" plugin-b/packages/name-utils/php/functions.php
           
           echo "Scenario fixtures installed!"
 
@@ -325,9 +325,36 @@ jobs:
             echo PHP_EOL . 'File: ' . \$metadata['file'];
           "
 
-      - name: Display wp-env logs on failure
+      - name: Display debug info on failure
         if: failure()
-        run: npx wp-env logs
+        run: |
+          echo "=== Docker Container Logs ==="
+          npx wp-env logs --no-color 2>&1 | tail -100
+          
+          echo ""
+          echo "=== WordPress Debug Log ==="
+          npx wp-env run cli cat /var/www/html/wp-content/debug.log 2>/dev/null || echo "No debug.log found"
+          
+          echo ""
+          echo "=== Check Plugin Files ==="
+          npx wp-env run cli ls -la /var/www/html/wp-content/plugins/ 2>/dev/null || echo "Could not list plugins"
+          
+          echo ""
+          echo "=== Check Plugin A name-utils ==="
+          npx wp-env run cli ls -la /var/www/html/wp-content/plugins/plugin-a/packages/name-utils/ 2>/dev/null || echo "Could not list plugin-a/packages/name-utils"
+          npx wp-env run cli ls -la /var/www/html/wp-content/plugins/plugin-a/packages/name-utils/php/ 2>/dev/null || echo "Could not list plugin-a/packages/name-utils/php"
+          
+          echo ""
+          echo "=== Plugin A functions.php content ==="
+          npx wp-env run cli cat /var/www/html/wp-content/plugins/plugin-a/packages/name-utils/php/functions.php 2>/dev/null | head -30 || echo "Could not read functions.php"
+          
+          echo ""
+          echo "=== Plugin B functions.php content ==="
+          npx wp-env run cli cat /var/www/html/wp-content/plugins/plugin-b/packages/name-utils/php/functions.php 2>/dev/null | head -30 || echo "Could not read functions.php"
+          
+          echo ""
+          echo "=== Test if function exists directly ==="
+          npx wp-env run cli wp eval "var_dump(function_exists('blockera_name_utils_get_version'));" 2>&1 || echo "Could not check function"
 
       - name: Stop wp-env
         if: always()
@@ -397,9 +424,9 @@ jobs:
         run: |
           echo "Installing plugin-a-newer scenario for compatibility test..."
           cp ".github/fixtures/scenarios/plugin-a-newer/plugin-a/composer.json" plugin-a/packages/name-utils/composer.json
-          cp ".github/fixtures/scenarios/plugin-a-newer/plugin-a/functions.php" plugin-a/packages/name-utils/php/functions.php
+          cp ".github/fixtures/scenarios/plugin-a-newer/plugin-a/php/functions.php" plugin-a/packages/name-utils/php/functions.php
           cp ".github/fixtures/scenarios/plugin-a-newer/plugin-b/composer.json" plugin-b/packages/name-utils/composer.json
-          cp ".github/fixtures/scenarios/plugin-a-newer/plugin-b/functions.php" plugin-b/packages/name-utils/php/functions.php
+          cp ".github/fixtures/scenarios/plugin-a-newer/plugin-b/php/functions.php" plugin-b/packages/name-utils/php/functions.php
 
       - name: Install Composer dependencies
         run: composer install --prefer-dist --no-interaction --no-progress
@@ -474,9 +501,19 @@ jobs:
             echo PHP_EOL . 'Version resolution correct!';
           "
 
-      - name: Display wp-env logs on failure
+      - name: Display debug info on failure
         if: failure()
-        run: npx wp-env logs
+        run: |
+          echo "=== Docker Container Logs ==="
+          npx wp-env logs --no-color 2>&1 | tail -100
+          
+          echo ""
+          echo "=== WordPress Debug Log ==="
+          npx wp-env run cli cat /var/www/html/wp-content/debug.log 2>/dev/null || echo "No debug.log found"
+          
+          echo ""
+          echo "=== Test if function exists ==="
+          npx wp-env run cli wp eval "var_dump(function_exists('blockera_name_utils_get_version'));" 2>&1 || echo "Could not check function"
 
       - name: Stop wp-env
         if: always()
