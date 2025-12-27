@@ -23,31 +23,26 @@ jobs:
       matrix:
         include:
           - scenario_name: "plugin-a-newer"
-            scenario_description: "Plugin A has newer version (2.0.0 vs 1.0.0)"
             plugin_a_version: "2.0.0"
             plugin_b_version: "1.0.0"
             expected_winner: "plugin-a"
             expected_version: "2.0.0"
           - scenario_name: "plugin-b-newer"
-            scenario_description: "Plugin B has newer version (1.0.0 vs 2.0.0)"
             plugin_a_version: "1.0.0"
             plugin_b_version: "2.0.0"
             expected_winner: "plugin-b"
             expected_version: "2.0.0"
           - scenario_name: "same-version"
-            scenario_description: "Both plugins have same version (1.0.0)"
             plugin_a_version: "1.0.0"
             plugin_b_version: "1.0.0"
             expected_winner: "plugin-a"
             expected_version: "1.0.0"
           - scenario_name: "major-version-diff"
-            scenario_description: "Major version difference (3.0.0 vs 1.0.0)"
             plugin_a_version: "3.0.0"
             plugin_b_version: "1.0.0"
             expected_winner: "plugin-a"
             expected_version: "3.0.0"
           - scenario_name: "patch-version-diff"
-            scenario_description: "Patch version difference (1.0.0 vs 1.0.1)"
             plugin_a_version: "1.0.0"
             plugin_b_version: "1.0.1"
             expected_winner: "plugin-b"
@@ -60,31 +55,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Display scenario info
+      - name: Verify required tools
         run: |
-          echo "=============================================="
-          echo "SCENARIO: ${{ matrix.scenario_name }}"
-          echo "=============================================="
-          echo "${{ matrix.scenario_description }}"
-          echo ""
-          echo "Plugin A version: ${{ matrix.plugin_a_version }}"
-          echo "Plugin B version: ${{ matrix.plugin_b_version }}"
-          echo "Expected winner:  ${{ matrix.expected_winner }}"
-          echo "Expected version: ${{ matrix.expected_version }}"
-          echo "=============================================="
+          command -v jq >/dev/null 2>&1 || { echo "ERROR: jq not found"; exit 1; }
+          command -v curl >/dev/null 2>&1 || { echo "ERROR: curl not found"; exit 1; }
+          command -v docker >/dev/null 2>&1 || { echo "ERROR: docker not found"; exit 1; }
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-
-      - name: Cache npm dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.npm
-          key: ${{ runner.os }}-node-${{ hashFiles('**/package.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
@@ -93,634 +73,213 @@ jobs:
           extensions: mbstring, json
           tools: composer:v2
 
-      - name: Get Composer cache directory
-        id: composer-cache
-        run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
-
       - name: Cache Composer dependencies
         uses: actions/cache@v4
         with:
-          path: ${{ steps.composer-cache.outputs.dir }}
+          path: ~/.composer/cache
           key: ${{ runner.os }}-composer-8.2-${{ hashFiles('**/composer.json') }}
           restore-keys: |
             ${{ runner.os }}-composer-8.2-
-            ${{ runner.os }}-composer-
 
-      - name: Install root Composer dependencies
-        run: composer install --prefer-dist --no-interaction --no-progress
-
-      - name: Install npm dependencies
-        run: npm install
+      - name: Install root dependencies
+        run: |
+          composer install --prefer-dist --no-interaction --no-progress --no-scripts
+          npm ci
 
       - name: Install scenario fixtures
         run: |
           SCENARIO="${{ matrix.scenario_name }}"
-          echo "Installing fixtures for scenario: $SCENARIO"
-          
           if [ ! -d ".github/fixtures/scenarios/$SCENARIO" ]; then
             echo "ERROR: Scenario directory not found: .github/fixtures/scenarios/$SCENARIO"
             exit 1
           fi
-          
-          echo "Installing plugin-a fixtures..."
           cp ".github/fixtures/scenarios/$SCENARIO/plugin-a/composer.json" plugin-a/packages/name-utils/composer.json
           cp ".github/fixtures/scenarios/$SCENARIO/plugin-a/php/functions.php" plugin-a/packages/name-utils/php/functions.php
-          
-          echo "Installing plugin-b fixtures..."
           cp ".github/fixtures/scenarios/$SCENARIO/plugin-b/composer.json" plugin-b/packages/name-utils/composer.json
           cp ".github/fixtures/scenarios/$SCENARIO/plugin-b/php/functions.php" plugin-b/packages/name-utils/php/functions.php
-          
-          echo "Scenario fixtures installed!"
 
-      - name: Verify fixture versions match scenario
+      - name: Verify fixture versions
         run: |
-          echo "Verifying fixture versions..."
-          
           PLUGIN_A_VERSION=$(jq -r '.version' plugin-a/packages/name-utils/composer.json)
           PLUGIN_B_VERSION=$(jq -r '.version' plugin-b/packages/name-utils/composer.json)
-          
-          EXPECTED_A="${{ matrix.plugin_a_version }}"
-          EXPECTED_B="${{ matrix.plugin_b_version }}"
-          
-          echo "Plugin A version: $PLUGIN_A_VERSION (expected: $EXPECTED_A)"
-          echo "Plugin B version: $PLUGIN_B_VERSION (expected: $EXPECTED_B)"
-          
-          if [ "$PLUGIN_A_VERSION" != "$EXPECTED_A" ]; then
-            echo "ERROR: Plugin A version mismatch!"
+          if [ "$PLUGIN_A_VERSION" != "${{ matrix.plugin_a_version }}" ] || [ "$PLUGIN_B_VERSION" != "${{ matrix.plugin_b_version }}" ]; then
+            echo "ERROR: Version mismatch"
             exit 1
           fi
-          
-          if [ "$PLUGIN_B_VERSION" != "$EXPECTED_B" ]; then
-            echo "ERROR: Plugin B version mismatch!"
-            exit 1
-          fi
-          
-          echo "Fixture versions verified!"
 
-      - name: Setup autoloader-coordinator for CI (before plugin install)
+      - name: Setup autoloader-coordinator
         run: |
-          echo "Copying autoloader-coordinator to plugins (required for path repository)..."
-          
           rm -rf plugin-a/packages/autoloader-coordinator
           rm -rf plugin-b/packages/autoloader-coordinator
-          
           cp -r packages/autoloader-coordinator plugin-a/packages/autoloader-coordinator
           cp -r packages/autoloader-coordinator plugin-b/packages/autoloader-coordinator
-          
-          echo "Verifying autoloader-coordinator is in place..."
-          ls -la plugin-a/packages/autoloader-coordinator/ | head -5
-          ls -la plugin-b/packages/autoloader-coordinator/ | head -5
-          
-          echo "Autoloader-coordinator copied successfully!"
 
-      - name: Install plugin dependencies and regenerate autoload
+      - name: Install plugin dependencies
         run: |
-          echo "Installing dependencies for plugins and regenerating autoload files..."
-          
-          # Plugin A
-          if [ -f "plugin-a/composer.json" ]; then
-            echo "Installing dependencies for plugin-a..."
-            cd plugin-a
-            # First install dependencies
-            composer install --no-interaction --quiet 2>&1 || {
-              echo "ERROR: Failed to install dependencies for plugin-a"
-              exit 1
-            }
-            # Force regenerate autoload to pick up fixture changes
-            echo "Regenerating autoload files for plugin-a..."
-            composer dump-autoload --no-interaction --optimize 2>&1 || {
-              echo "WARNING: composer dump-autoload failed, trying without optimize..."
-              composer dump-autoload --no-interaction 2>&1 || {
-                echo "ERROR: Failed to regenerate autoload for plugin-a"
-                exit 1
-              }
-            }
-            echo "✓ Plugin A dependencies installed and autoload regenerated"
-            cd ..
-          fi
-          
-          # Plugin B
-          if [ -f "plugin-b/composer.json" ]; then
-            echo "Installing dependencies for plugin-b..."
-            cd plugin-b
-            # First install dependencies
-            composer install --no-interaction --quiet 2>&1 || {
-              echo "ERROR: Failed to install dependencies for plugin-b"
-              exit 1
-            }
-            # Force regenerate autoload to pick up fixture changes
-            echo "Regenerating autoload files for plugin-b..."
-            composer dump-autoload --no-interaction --optimize 2>&1 || {
-              echo "WARNING: composer dump-autoload failed, trying without optimize..."
-              composer dump-autoload --no-interaction 2>&1 || {
-                echo "ERROR: Failed to regenerate autoload for plugin-b"
-                exit 1
-              }
-            }
-            echo "✓ Plugin B dependencies installed and autoload regenerated"
-            cd ..
-          fi
-          
-          echo "Verifying autoload files were generated..."
-          if [ -f "plugin-a/vendor/composer/autoload_files.php" ]; then
-            echo "✓ plugin-a autoload_files.php exists"
-            echo "Checking if functions.php is in autoload_files.php..."
-            if grep -q "functions.php" plugin-a/vendor/composer/autoload_files.php; then
-              echo "✓ functions.php found in plugin-a autoload_files.php"
-              echo "Extracting file path from autoload_files.php..."
-              grep -o "['\"][^'\"]*functions\.php[^'\"]*['\"]" plugin-a/vendor/composer/autoload_files.php | head -1 || echo "Could not extract path"
-            else
-              echo "✗ ERROR: functions.php NOT found in plugin-a autoload_files.php"
-              echo "Contents of autoload_files.php:"
-              cat plugin-a/vendor/composer/autoload_files.php | head -30
-              echo ""
-              echo "This means Composer did not include functions.php in autoload!"
-              exit 1
-            fi
-          else
-            echo "✗ ERROR: plugin-a autoload_files.php missing!"
+          set -e
+          cd plugin-a && composer install --no-interaction --no-progress --no-scripts
+          composer dump-autoload --no-interaction --optimize
+          cd ../plugin-b && composer install --no-interaction --no-progress --no-scripts
+          composer dump-autoload --no-interaction --optimize
+          cd ..
+          if ! grep -q "functions.php" plugin-a/vendor/composer/autoload_files.php || ! grep -q "functions.php" plugin-b/vendor/composer/autoload_files.php; then
+            echo "ERROR: functions.php not in autoload files"
             exit 1
           fi
-          
-          if [ -f "plugin-b/vendor/composer/autoload_files.php" ]; then
-            echo "✓ plugin-b autoload_files.php exists"
-            echo "Checking if functions.php is in autoload_files.php..."
-            if grep -q "functions.php" plugin-b/vendor/composer/autoload_files.php; then
-              echo "✓ functions.php found in plugin-b autoload_files.php"
-              echo "Extracting file path from autoload_files.php..."
-              grep -o "['\"][^'\"]*functions\.php[^'\"]*['\"]" plugin-b/vendor/composer/autoload_files.php | head -1 || echo "Could not extract path"
-            else
-              echo "✗ ERROR: functions.php NOT found in plugin-b autoload_files.php"
-              echo "Contents of autoload_files.php:"
-              cat plugin-b/vendor/composer/autoload_files.php | head -30
-              echo ""
-              echo "This means Composer did not include functions.php in autoload!"
-              exit 1
-            fi
-          else
-            echo "✗ ERROR: plugin-b autoload_files.php missing!"
-            exit 1
-          fi
-          
-          echo "All autoload files generated successfully!"
 
       - name: Start wp-env
-        run: npx wp-env start --update
-
-      - name: Wait for WordPress to be ready
         run: |
-          echo "Waiting for WordPress to be ready..."
-          for i in $(seq 1 30); do
-            if curl -s -o /dev/null -w "%{http_code}" http://localhost:8888 | grep -q "200\|302"; then
-              echo "WordPress is ready!"
-              break
+          npx --yes @wordpress/env start --update
+
+      - name: Wait for WordPress readiness
+        run: |
+          set -e
+          MAX_ATTEMPTS=60
+          ATTEMPT=0
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            if curl -sf http://localhost:8888 >/dev/null 2>&1; then
+              if npx --yes @wordpress/env run cli wp core version >/dev/null 2>&1; then
+                echo "WordPress is ready"
+                exit 0
+              fi
             fi
-            echo "Attempt $i: WordPress not ready yet, waiting..."
+            ATTEMPT=$((ATTEMPT + 1))
             sleep 2
           done
+          echo "ERROR: WordPress did not become ready"
+          npx --yes @wordpress/env logs
+          exit 1
 
-      - name: Verify WordPress is running
+      - name: Verify WordPress response
         run: |
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8888)
-          echo "HTTP Status: $HTTP_STATUS"
-          if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "302" ]; then
-            echo "WordPress is not responding correctly"
-            npx wp-env logs
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8888)
+          if [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "302" ]; then
+            echo "ERROR: WordPress returned HTTP $HTTP_CODE"
+            npx --yes @wordpress/env logs
             exit 1
           fi
 
       - name: Activate plugins
         run: |
-          npx wp-env run cli wp plugin activate plugin-a plugin-b
-          npx wp-env run cli wp plugin list
-
-      - name: Verify autoload files are accessible in container
-        run: |
-          echo "Checking if autoload files exist in container..."
-          npx wp-env run cli ls -la /var/www/html/wp-content/plugins/plugin-a/vendor/composer/autoload_files.php 2>&1 || echo "plugin-a autoload_files.php not found"
-          npx wp-env run cli ls -la /var/www/html/wp-content/plugins/plugin-b/vendor/composer/autoload_files.php 2>&1 || echo "plugin-b autoload_files.php not found"
-          
-          echo ""
-          echo "Checking if functions.php files exist in container..."
-          npx wp-env run cli ls -la /var/www/html/wp-content/plugins/plugin-a/packages/name-utils/php/functions.php 2>&1 || echo "plugin-a functions.php not found"
-          npx wp-env run cli ls -la /var/www/html/wp-content/plugins/plugin-b/packages/name-utils/php/functions.php 2>&1 || echo "plugin-b functions.php not found"
-
-      - name: Check autoload files content in container
-        run: |
-          echo "Checking plugin-a autoload_files.php content..."
-          npx wp-env run cli grep -o "functions.php" /var/www/html/wp-content/plugins/plugin-a/vendor/composer/autoload_files.php 2>&1 | head -5 || echo "functions.php not found in autoload_files.php"
-          
-          echo ""
-          echo "Checking plugin-b autoload_files.php content..."
-          npx wp-env run cli grep -o "functions.php" /var/www/html/wp-content/plugins/plugin-b/vendor/composer/autoload_files.php 2>&1 | head -5 || echo "functions.php not found in autoload_files.php"
-
-      - name: Verify autoloader-coordinator is loaded
-        run: |
-          echo "Checking if autoloader-coordinator is loaded..."
-          RESPONSE=$(curl -s http://localhost:8888)
-          
-          if echo "$RESPONSE" | grep -qi "fatal error"; then
-            echo "PHP Fatal Error detected!"
-            echo "$RESPONSE"
+          set -e
+          npx --yes @wordpress/env run cli wp plugin activate plugin-a plugin-b
+          ACTIVE_PLUGINS=$(npx --yes @wordpress/env run cli wp plugin list --status=active --field=name)
+          if ! echo "$ACTIVE_PLUGINS" | grep -q "plugin-a" || ! echo "$ACTIVE_PLUGINS" | grep -q "plugin-b"; then
+            echo "ERROR: Plugins not activated"
+            npx --yes @wordpress/env run cli wp plugin list
             exit 1
           fi
-          
-          echo "Page loaded successfully without fatal errors"
 
-      - name: Test autoloader coordinator class exists
+      - name: Verify coordinator class
         run: |
-          npx wp-env run cli wp eval "
-            if (class_exists('\Blockera\SharedAutoload\Coordinator')) {
-              echo 'Coordinator class exists: YES';
-              \$coordinator = \Blockera\SharedAutoload\Coordinator::getInstance();
-              echo PHP_EOL . 'Coordinator instance created successfully';
-            } else {
-              echo 'Coordinator class exists: NO';
+          npx --yes @wordpress/env run cli wp eval "
+            if (!class_exists('Blockera\SharedAutoload\Coordinator')) {
+              echo 'ERROR: Coordinator class not found';
               exit(1);
             }
+            \$coordinator = \Blockera\SharedAutoload\Coordinator::getInstance();
+            if (!\$coordinator instanceof \Blockera\SharedAutoload\Coordinator) {
+              echo 'ERROR: Coordinator instance invalid';
+              exit(1);
+            }
+            echo 'Coordinator class verified';
           "
 
-      - name: Test registered plugins
+      - name: Verify plugin registration
         run: |
-          npx wp-env run cli wp eval "
+          npx --yes @wordpress/env run cli wp eval "
             \$dependencies = apply_filters('blockera/autoloader-coordinator/plugins/dependencies', []);
-            echo 'Registered plugins: ' . implode(', ', array_keys(\$dependencies));
-            
             if (empty(\$dependencies)) {
-              echo PHP_EOL . 'ERROR: No plugins registered!';
+              echo 'ERROR: No plugins registered';
               exit(1);
             }
-            
             if (!isset(\$dependencies['plugin-a']) || !isset(\$dependencies['plugin-b'])) {
-              echo PHP_EOL . 'ERROR: Expected plugin-a and plugin-b to be registered!';
+              echo 'ERROR: Missing plugin registration';
               exit(1);
             }
-            
-            echo PHP_EOL . 'Both plugins registered successfully!';
+            echo 'Plugins registered: ' . implode(', ', array_keys(\$dependencies));
           "
 
-      - name: Clear coordinator cache and force reload
+      - name: Clear coordinator cache
         run: |
-          echo "Clearing coordinator cache and forcing file reload..."
-          npx wp-env run cli wp eval "
-            // Clear all coordinator caches
+          npx --yes @wordpress/env run cli wp eval "
             delete_transient('blockera_pkgs_files');
             delete_transient('blockera_pkg_manifest');
-            
-            // Clear static memoization by getting fresh instance
-            \$coordinator = \Blockera\SharedAutoload\Coordinator::getInstance();
-            
-            // Use reflection to clear private properties if needed
-            \$reflection = new ReflectionClass(\$coordinator);
-            
-            // Force coordinator to reload files
-            // The coordinator should reload on next request, but let's try to trigger it
-            echo 'Cache cleared, coordinator instance obtained' . PHP_EOL;
-            
-            // Check autoload manifest
-            \$autoload_a = '/var/www/html/wp-content/plugins/plugin-a/vendor/composer/autoload_files.php';
-            \$autoload_b = '/var/www/html/wp-content/plugins/plugin-b/vendor/composer/autoload_files.php';
-            
-            if (file_exists(\$autoload_a)) {
-              \$content_a = file_get_contents(\$autoload_a);
-              echo 'Plugin A autoload_files.php size: ' . strlen(\$content_a) . ' bytes' . PHP_EOL;
-              if (strpos(\$content_a, 'functions.php') !== false) {
-                echo '✓ functions.php found in plugin-a autoload_files.php' . PHP_EOL;
-                // Extract the file path
-                if (preg_match('/[\'\"]([^\'\"]*functions\.php[^\'\"]*)[\'\"]/', \$content_a, \$matches)) {
-                  echo '  File path in autoload: ' . \$matches[1] . PHP_EOL;
-                  \$full_path = '/var/www/html/wp-content/plugins/plugin-a/' . ltrim(\$matches[1], '/');
-                  echo '  Full path: ' . \$full_path . PHP_EOL;
-                  echo '  File exists: ' . (file_exists(\$full_path) ? 'YES' : 'NO') . PHP_EOL;
-                  if (file_exists(\$full_path) && !function_exists('blockera_name_utils_get_version')) {
-                    echo '  Attempting to require file...' . PHP_EOL;
-                    require_once \$full_path;
-                    echo '  Function exists after require: ' . (function_exists('blockera_name_utils_get_version') ? 'YES' : 'NO') . PHP_EOL;
-                  }
-                }
-              } else {
-                echo '✗ functions.php NOT found in plugin-a autoload_files.php' . PHP_EOL;
-                echo 'First 500 chars of autoload_files.php:' . PHP_EOL;
-                echo substr(\$content_a, 0, 500) . PHP_EOL;
-              }
-            } else {
-              echo '✗ Plugin A autoload_files.php does not exist!' . PHP_EOL;
-            }
-            
-            echo PHP_EOL . 'Current function status:' . PHP_EOL;
-            echo 'blockera_name_utils_get_version: ' . (function_exists('blockera_name_utils_get_version') ? 'EXISTS' : 'MISSING') . PHP_EOL;
-            echo 'blockera_name_utils_get_loaded_from: ' . (function_exists('blockera_name_utils_get_loaded_from') ? 'EXISTS' : 'MISSING') . PHP_EOL;
-          " 2>&1
+            echo 'Cache cleared';
+          "
 
       - name: Test version resolution
         id: version-test
         run: |
-          set +e  # Don't exit on error immediately
-          
-          echo "Testing version resolution for scenario: ${{ matrix.scenario_name }}"
-          echo "Expected: version=${{ matrix.expected_version }}, loaded_from=${{ matrix.expected_winner }}"
-          
-          # First, try to manually trigger coordinator to include files
-          echo "Attempting to force coordinator to include files..."
-          npx wp-env run cli wp eval "
-            // Get coordinator and try to force file inclusion
-            \$coordinator = \Blockera\SharedAutoload\Coordinator::getInstance();
-            
-            // Use reflection to access private method (for debugging)
-            try {
-              \$reflection = new ReflectionClass(\$coordinator);
-              \$method = \$reflection->getMethod('includeAutoloadFiles');
-              \$method->setAccessible(true);
-              \$method->invoke(\$coordinator);
-              echo 'Forced coordinator to include autoload files' . PHP_EOL;
-            } catch (Exception \$e) {
-              echo 'Could not force file inclusion: ' . \$e->getMessage() . PHP_EOL;
-            }
-          " 2>&1 || echo "Could not force file inclusion (this is OK)"
-          
-          # Run the eval and capture output
-          set +e  # Don't exit on error
-          RAW_OUTPUT=$(npx wp-env run cli wp eval "
+          set -e
+          RAW_OUTPUT=$(npx --yes @wordpress/env run cli wp eval "
             if (!function_exists('blockera_name_utils_get_version')) {
               echo 'ERROR:MISSING_VERSION_FUNCTION';
-              exit(0);
+              exit(1);
             }
-            
             if (!function_exists('blockera_name_utils_get_loaded_from')) {
               echo 'ERROR:MISSING_LOADED_FROM_FUNCTION';
-              exit(0);
+              exit(1);
             }
-            
             \$version = blockera_name_utils_get_version();
             \$loaded_from = blockera_name_utils_get_loaded_from();
-            
             echo \$version . '|' . \$loaded_from;
           " 2>&1)
-          EVAL_EXIT_CODE=$?
-          set -e  # Re-enable exit on error
           
-          # If wp eval command itself failed, capture that
-          if [ $EVAL_EXIT_CODE -ne 0 ]; then
-            echo "wp eval command failed with exit code: $EVAL_EXIT_CODE"
-            echo "Raw output: $RAW_OUTPUT"
-          fi
+          RESULT=$(echo "$RAW_OUTPUT" | grep -E "(ERROR:|[0-9]+\.[0-9]+\.[0-9]+\|plugin-[ab])" | grep -vE "(Starting|Ran|on the cli|in [0-9]+s)" | head -1 | tr -d '\r\n' | xargs)
           
-          # Extract only the actual result line (version|plugin or ERROR:)
-          # Filter out wp-env verbose output lines (Starting, Ran, on the cli container, etc.)
-          # Match lines that contain version|plugin pattern or ERROR: at start
-          RESULT=$(echo "$RAW_OUTPUT" | grep -vE "(Starting|Ran|on the cli container|in [0-9]+s)" | grep -E "(ERROR:|[0-9]+\.[0-9]+\.[0-9]+\|plugin-[ab])" | head -1 | tr -d '\r\n' | xargs)
-          
-          echo "Raw output length: ${#RAW_OUTPUT} characters"
-          echo "Extracted result: '$RESULT'"
-          
-          # Check if result is empty or contains ERROR
           if [ -z "$RESULT" ] || echo "$RESULT" | grep -qE "^ERROR:"; then
-            echo ""
-            echo "=========================================="
-            echo "ERROR: Helper function missing!"
-            echo "=========================================="
-            echo ""
-            echo "Debugging information:"
-            echo ""
-            
-            # Capture debug info before exiting
-            echo "=== Checking function availability ==="
-            npx wp-env run cli wp eval "
-              echo 'blockera_name_utils_get_version exists: ' . (function_exists('blockera_name_utils_get_version') ? 'YES' : 'NO') . PHP_EOL;
-              echo 'blockera_name_utils_get_loaded_from exists: ' . (function_exists('blockera_name_utils_get_loaded_from') ? 'YES' : 'NO') . PHP_EOL;
-            " 2>&1 || echo "Could not check functions"
-            
-            echo ""
-            echo "=== Checking autoload files ==="
-            npx wp-env run cli cat /var/www/html/wp-content/plugins/plugin-a/vendor/composer/autoload_files.php 2>&1 | grep -i "functions" | head -5 || echo "Could not read autoload_files.php"
-            npx wp-env run cli cat /var/www/html/wp-content/plugins/plugin-b/vendor/composer/autoload_files.php 2>&1 | grep -i "functions" | head -5 || echo "Could not read autoload_files.php"
-            
-            echo ""
-            echo "=== Checking if files exist ==="
-            npx wp-env run cli ls -la /var/www/html/wp-content/plugins/plugin-a/packages/name-utils/php/functions.php 2>&1 || echo "Plugin A functions.php not found"
-            npx wp-env run cli ls -la /var/www/html/wp-content/plugins/plugin-b/packages/name-utils/php/functions.php 2>&1 || echo "Plugin B functions.php not found"
-            
-            echo ""
-            echo "=== Checking coordinator status ==="
-            npx wp-env run cli wp eval "
-              \$coordinator = \Blockera\SharedAutoload\Coordinator::getInstance();
-              echo 'Coordinator instance: ' . get_class(\$coordinator) . PHP_EOL;
-            " 2>&1 || echo "Could not get coordinator instance"
-            
-            echo "test_passed=false" >> $GITHUB_OUTPUT
-            echo ""
-            echo "Full raw output for debugging:"
-            echo "$RAW_OUTPUT"
+            echo "ERROR: Helper functions missing"
+            echo "Raw output: $RAW_OUTPUT"
             exit 1
           fi
           
-          # Extract version and loaded_from from the clean result
-          # Result format: "3.0.0|plugin-a"
-          if echo "$RESULT" | grep -qE '[0-9]+\.[0-9]+\.[0-9]+\|plugin-[ab]'; then
-            VERSION=$(echo "$RESULT" | cut -d'|' -f1 | xargs)
-            LOADED_FROM=$(echo "$RESULT" | cut -d'|' -f2 | xargs)
-            
-            # Validate extracted values
-            if [ -z "$VERSION" ] || [ -z "$LOADED_FROM" ]; then
-              echo "ERROR: Could not extract version or loaded_from from result: '$RESULT'"
-              echo "Full raw output:"
-              echo "$RAW_OUTPUT"
-              echo "test_passed=false" >> $GITHUB_OUTPUT
-              exit 1
-            fi
-          else
-            echo "ERROR: Could not parse result: '$RESULT'"
-            echo "Full raw output:"
-            echo "$RAW_OUTPUT"
-            echo "test_passed=false" >> $GITHUB_OUTPUT
+          VERSION=$(echo "$RESULT" | cut -d'|' -f1 | xargs)
+          LOADED_FROM=$(echo "$RESULT" | cut -d'|' -f2 | xargs)
+          
+          if [ -z "$VERSION" ] || [ -z "$LOADED_FROM" ]; then
+            echo "ERROR: Could not parse result: $RESULT"
             exit 1
           fi
-          
-          echo "Detected version: $VERSION"
-          echo "Loaded from: $LOADED_FROM"
           
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "loaded_from=$LOADED_FROM" >> $GITHUB_OUTPUT
           
-          EXPECTED_VERSION="${{ matrix.expected_version }}"
-          EXPECTED_WINNER="${{ matrix.expected_winner }}"
+          if [ "$VERSION" != "${{ matrix.expected_version }}" ] || [ "$LOADED_FROM" != "${{ matrix.expected_winner }}" ]; then
+            echo "ERROR: Version resolution failed"
+            echo "Expected: ${{ matrix.expected_version }} from ${{ matrix.expected_winner }}"
+            echo "Got: $VERSION from $LOADED_FROM"
+            exit 1
+          fi
           
-          if [ "$VERSION" = "$EXPECTED_VERSION" ] && [ "$LOADED_FROM" = "$EXPECTED_WINNER" ]; then
-            echo "SUCCESS: Version resolution correct!"
-            echo "Version: $VERSION (expected: $EXPECTED_VERSION)"
-            echo "Loaded from: $LOADED_FROM (expected: $EXPECTED_WINNER)"
-            echo "test_passed=true" >> $GITHUB_OUTPUT
-            exit 0
-          else
-            echo "FAILURE: Version resolution incorrect!"
-            echo "Got version: $VERSION (expected: $EXPECTED_VERSION)"
-            echo "Got loaded_from: $LOADED_FROM (expected: $EXPECTED_WINNER)"
-            echo "test_passed=false" >> $GITHUB_OUTPUT
-            
-            # Show debug info before exiting
-            echo ""
-            echo "=== Debug: Checking what was actually loaded ==="
-            npx wp-env run cli wp eval "
-              if (function_exists('blockera_name_utils_get_metadata')) {
-                \$meta = blockera_name_utils_get_metadata();
-                echo 'Metadata: ' . print_r(\$meta, true) . PHP_EOL;
-              }
-            " 2>&1 || echo "Could not get metadata"
-            
+          echo "Version resolution correct: $VERSION from $LOADED_FROM"
+
+      - name: Verify homepage rendering
+        run: |
+          set -e
+          RESPONSE=$(curl -s http://localhost:8888)
+          if echo "$RESPONSE" | grep -qi "fatal error\|parse error\|warning:"; then
+            echo "ERROR: PHP errors detected in homepage"
+            echo "$RESPONSE" | grep -i "fatal\|parse\|warning" | head -10
             exit 1
           fi
 
-      - name: Capture debug info after version test
-        if: always()
-        continue-on-error: true
-        run: |
-          # Only show if test failed
-          if [ "${{ steps.version-test.outcome }}" != "success" ]; then
-            echo "=========================================="
-            echo "POST-TEST DEBUG INFO"
-            echo "=========================================="
-            echo ""
-            
-            # Check if wp-env is accessible
-            if ! npx wp-env run cli wp --info > /dev/null 2>&1; then
-              echo "wp-env container not accessible"
-              exit 0
-            fi
-            
-            echo "=== Function Status ==="
-            npx wp-env run cli wp eval "
-              echo 'blockera_name_utils_get_version: ' . (function_exists('blockera_name_utils_get_version') ? 'EXISTS' : 'MISSING') . PHP_EOL;
-              echo 'blockera_name_utils_get_loaded_from: ' . (function_exists('blockera_name_utils_get_loaded_from') ? 'EXISTS' : 'MISSING') . PHP_EOL;
-            " 2>&1 || echo "Could not check functions"
-            
-            echo ""
-            echo "=== Autoload Files Check ==="
-            npx wp-env run cli grep -i "functions" /var/www/html/wp-content/plugins/plugin-a/vendor/composer/autoload_files.php 2>&1 | head -3 || echo "Could not check plugin-a autoload"
-            npx wp-env run cli grep -i "functions" /var/www/html/wp-content/plugins/plugin-b/vendor/composer/autoload_files.php 2>&1 | head -3 || echo "Could not check plugin-b autoload"
-          fi
-
-      - name: Test version constants
-        run: |
-          npx wp-env run cli wp eval "
-            echo 'Checking version constants...';
-            
-            if (defined('BLOCKERA_NAME_UTILS_VERSION')) {
-              echo PHP_EOL . 'BLOCKERA_NAME_UTILS_VERSION = ' . BLOCKERA_NAME_UTILS_VERSION;
-            } else {
-              echo PHP_EOL . 'BLOCKERA_NAME_UTILS_VERSION is not defined';
-            }
-            
-            if (defined('BLOCKERA_NAME_UTILS_LOADED_FROM')) {
-              echo PHP_EOL . 'BLOCKERA_NAME_UTILS_LOADED_FROM = ' . BLOCKERA_NAME_UTILS_LOADED_FROM;
-            } else {
-              echo PHP_EOL . 'BLOCKERA_NAME_UTILS_LOADED_FROM is not defined';
-            }
-          "
-
-      - name: Test package metadata
-        run: |
-          npx wp-env run cli wp eval "
-            if (!function_exists('blockera_name_utils_get_metadata')) {
-              echo 'Metadata function not available';
-              exit(0);
-            }
-            
-            \$metadata = blockera_name_utils_get_metadata();
-            echo 'Package Metadata:';
-            echo PHP_EOL . 'Version: ' . \$metadata['version'];
-            echo PHP_EOL . 'Loaded from: ' . \$metadata['loaded_from'];
-            echo PHP_EOL . 'Scenario: ' . (\$metadata['scenario'] ?? 'N/A');
-            echo PHP_EOL . 'File: ' . \$metadata['file'];
-          "
-
       - name: Display debug info on failure
-        if: failure() || always()
+        if: failure()
         continue-on-error: true
         run: |
-          echo "=========================================="
-          echo "DEBUG INFORMATION (Step failed)"
-          echo "=========================================="
-          echo ""
-          
-          # Check if wp-env is still running
-          if ! npx wp-env run cli wp --info > /dev/null 2>&1; then
-            echo "WARNING: wp-env container is not accessible"
-            echo "Showing Docker logs instead:"
-            npx wp-env logs --no-color 2>&1 | tail -50
-            exit 0
+          if npx --yes @wordpress/env run cli wp --info >/dev/null 2>&1; then
+            npx --yes @wordpress/env logs --no-color 2>&1 | tail -100
+            npx --yes @wordpress/env run cli wp eval "
+              echo 'Functions:';
+              echo '  blockera_name_utils_get_version: ' . (function_exists('blockera_name_utils_get_version') ? 'EXISTS' : 'MISSING');
+              echo '  blockera_name_utils_get_loaded_from: ' . (function_exists('blockera_name_utils_get_loaded_from') ? 'EXISTS' : 'MISSING');
+            " 2>&1 || true
           fi
-          
-          echo "=== Docker Container Logs ==="
-          npx wp-env logs --no-color 2>&1 | tail -100 || echo "Could not get logs"
-          
-          echo ""
-          echo "=== WordPress Debug Log ==="
-          npx wp-env run cli cat /var/www/html/wp-content/debug.log 2>/dev/null | tail -50 || echo "No debug.log found"
-          
-          echo ""
-          echo "=== Check Plugin Files ==="
-          npx wp-env run cli ls -la /var/www/html/wp-content/plugins/ 2>/dev/null || echo "Could not list plugins"
-          
-          echo ""
-          echo "=== Check Plugin A name-utils ==="
-          npx wp-env run cli ls -la /var/www/html/wp-content/plugins/plugin-a/packages/name-utils/ 2>/dev/null || echo "Could not list plugin-a/packages/name-utils"
-          npx wp-env run cli ls -la /var/www/html/wp-content/plugins/plugin-a/packages/name-utils/php/ 2>/dev/null || echo "Could not list plugin-a/packages/name-utils/php"
-          
-          echo ""
-          echo "=== Plugin A functions.php content ==="
-          npx wp-env run cli cat /var/www/html/wp-content/plugins/plugin-a/packages/name-utils/php/functions.php 2>/dev/null | head -30 || echo "Could not read functions.php"
-          
-          echo ""
-          echo "=== Plugin B functions.php content ==="
-          npx wp-env run cli cat /var/www/html/wp-content/plugins/plugin-b/packages/name-utils/php/functions.php 2>/dev/null | head -30 || echo "Could not read functions.php"
-          
-          echo ""
-          echo "=== Check autoload files ==="
-          echo "Plugin A autoload_files.php:"
-          npx wp-env run cli cat /var/www/html/wp-content/plugins/plugin-a/vendor/composer/autoload_files.php 2>/dev/null | grep -i "functions" | head -5 || echo "Could not read or functions.php not found"
-          echo ""
-          echo "Plugin B autoload_files.php:"
-          npx wp-env run cli cat /var/www/html/wp-content/plugins/plugin-b/vendor/composer/autoload_files.php 2>/dev/null | grep -i "functions" | head -5 || echo "Could not read or functions.php not found"
-          
-          echo ""
-          echo "=== Test if function exists directly ==="
-          npx wp-env run cli wp eval "
-            echo 'blockera_name_utils_get_version: ' . (function_exists('blockera_name_utils_get_version') ? 'EXISTS' : 'MISSING') . PHP_EOL;
-            echo 'blockera_name_utils_get_loaded_from: ' . (function_exists('blockera_name_utils_get_loaded_from') ? 'EXISTS' : 'MISSING') . PHP_EOL;
-            
-            // Check what's in GLOBALS
-            if (isset(\$GLOBALS['__composer_autoload_files'])) {
-              echo 'Composer autoload files loaded: ' . count(\$GLOBALS['__composer_autoload_files']) . ' files' . PHP_EOL;
-              foreach (\$GLOBALS['__composer_autoload_files'] as \$key => \$val) {
-                if (strpos(\$key, 'functions') !== false || strpos(\$key, 'name-utils') !== false) {
-                  echo '  Found: ' . \$key . PHP_EOL;
-                }
-              }
-            } else {
-              echo 'No composer autoload files loaded' . PHP_EOL;
-            }
-          " 2>&1 || echo "Could not check function"
-          
-          echo ""
-          echo "=== Coordinator Package Manifest ==="
-          npx wp-env run cli wp eval "
-            \$coordinator = \Blockera\SharedAutoload\Coordinator::getInstance();
-            \$manifest = get_transient('blockera_pkg_manifest');
-            if (\$manifest) {
-              echo 'Package manifest cached:' . PHP_EOL;
-              foreach (\$manifest as \$pkg => \$meta) {
-                if (strpos(\$pkg, 'name-utils') !== false) {
-                  echo '  ' . \$pkg . ': v' . \$meta['version'] . ' from ' . \$meta['plugin'] . PHP_EOL;
-                }
-              }
-            } else {
-              echo 'Package manifest not cached' . PHP_EOL;
-            }
-          " 2>&1 || echo "Could not check manifest"
 
       - name: Stop wp-env
         if: always()
-        run: npx wp-env stop
+        run: npx --yes @wordpress/env stop || true
 
   wp-compatibility-test:
     name: WordPress ${{ matrix.wp }} - PHP ${{ matrix.php }}
@@ -749,18 +308,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Verify required tools
+        run: |
+          command -v jq >/dev/null 2>&1 || { echo "ERROR: jq not found"; exit 1; }
+          command -v curl >/dev/null 2>&1 || { echo "ERROR: curl not found"; exit 1; }
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-
-      - name: Cache npm dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.npm
-          key: ${{ runner.os }}-node-${{ hashFiles('**/package.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
@@ -769,177 +325,119 @@ jobs:
           extensions: mbstring, json
           tools: composer:v2
 
-      - name: Get Composer cache directory
-        id: composer-cache
-        run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
-
       - name: Cache Composer dependencies
         uses: actions/cache@v4
         with:
-          path: ${{ steps.composer-cache.outputs.dir }}
+          path: ~/.composer/cache
           key: ${{ runner.os }}-composer-${{ matrix.php }}-${{ hashFiles('**/composer.json') }}
           restore-keys: |
             ${{ runner.os }}-composer-${{ matrix.php }}-
-            ${{ runner.os }}-composer-
 
-      - name: Install root Composer dependencies
-        run: composer install --prefer-dist --no-interaction --no-progress
-
-      - name: Install npm dependencies
-        run: npm install
+      - name: Install root dependencies
+        run: |
+          composer install --prefer-dist --no-interaction --no-progress --no-scripts
+          npm ci
 
       - name: Install scenario fixtures
         run: |
-          echo "Installing plugin-a-newer scenario for compatibility test..."
           cp ".github/fixtures/scenarios/plugin-a-newer/plugin-a/composer.json" plugin-a/packages/name-utils/composer.json
           cp ".github/fixtures/scenarios/plugin-a-newer/plugin-a/php/functions.php" plugin-a/packages/name-utils/php/functions.php
           cp ".github/fixtures/scenarios/plugin-a-newer/plugin-b/composer.json" plugin-b/packages/name-utils/composer.json
           cp ".github/fixtures/scenarios/plugin-a-newer/plugin-b/php/functions.php" plugin-b/packages/name-utils/php/functions.php
 
-      - name: Setup autoloader-coordinator for CI (before plugin install)
+      - name: Setup autoloader-coordinator
         run: |
-          echo "Copying autoloader-coordinator to plugins (required for path repository)..."
           rm -rf plugin-a/packages/autoloader-coordinator
           rm -rf plugin-b/packages/autoloader-coordinator
           cp -r packages/autoloader-coordinator plugin-a/packages/autoloader-coordinator
           cp -r packages/autoloader-coordinator plugin-b/packages/autoloader-coordinator
-          echo "Done!"
 
-      - name: Install plugin dependencies and regenerate autoload
+      - name: Install plugin dependencies
         run: |
-          echo "Installing dependencies for plugins..."
-          
-          cd plugin-a && composer install --no-interaction --quiet && composer dump-autoload --no-interaction --optimize && cd .. || {
-            echo "ERROR: Failed to install dependencies for plugin-a"
-            exit 1
-          }
-          
-          cd plugin-b && composer install --no-interaction --quiet && composer dump-autoload --no-interaction --optimize && cd .. || {
-            echo "ERROR: Failed to install dependencies for plugin-b"
-            exit 1
-          }
-          
-          echo "Plugin dependencies installed and autoload files regenerated!"
+          set -e
+          cd plugin-a && composer install --no-interaction --no-progress --no-scripts
+          composer dump-autoload --no-interaction --optimize
+          cd ../plugin-b && composer install --no-interaction --no-progress --no-scripts
+          composer dump-autoload --no-interaction --optimize
+          cd ..
 
-      - name: Update wp-env for WordPress version
+      - name: Update wp-env configuration
         if: matrix.wp != 'latest'
         run: |
           jq --arg wp "${{ matrix.wp }}" '.core = "https://wordpress.org/wordpress-\($wp).zip"' .wp-env.json > .wp-env.json.tmp
           mv .wp-env.json.tmp .wp-env.json
-          cat .wp-env.json
 
       - name: Start wp-env
-        run: npx wp-env start --update
-
-      - name: Wait for WordPress to be ready
         run: |
-          echo "Waiting for WordPress to be ready..."
-          for i in $(seq 1 30); do
-            if curl -s -o /dev/null -w "%{http_code}" http://localhost:8888 | grep -q "200\|302"; then
-              echo "WordPress is ready!"
-              break
+          npx --yes @wordpress/env start --update
+
+      - name: Wait for WordPress readiness
+        run: |
+          set -e
+          MAX_ATTEMPTS=60
+          ATTEMPT=0
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            if curl -sf http://localhost:8888 >/dev/null 2>&1; then
+              if npx --yes @wordpress/env run cli wp core version >/dev/null 2>&1; then
+                echo "WordPress is ready"
+                exit 0
+              fi
             fi
-            echo "Attempt $i: WordPress not ready yet, waiting..."
+            ATTEMPT=$((ATTEMPT + 1))
             sleep 2
           done
-
-      - name: Verify WordPress is running
-        run: |
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8888)
-          echo "HTTP Status: $HTTP_STATUS"
-          if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "302" ]; then
-            echo "WordPress is not responding correctly"
-            npx wp-env logs
-            exit 1
-          fi
+          echo "ERROR: WordPress did not become ready"
+          npx --yes @wordpress/env logs
+          exit 1
 
       - name: Activate plugins
         run: |
-          npx wp-env run cli wp plugin activate plugin-a plugin-b
-          npx wp-env run cli wp plugin list
+          set -e
+          npx --yes @wordpress/env run cli wp plugin activate plugin-a plugin-b
+          ACTIVE_PLUGINS=$(npx --yes @wordpress/env run cli wp plugin list --status=active --field=name)
+          if ! echo "$ACTIVE_PLUGINS" | grep -q "plugin-a" || ! echo "$ACTIVE_PLUGINS" | grep -q "plugin-b"; then
+            echo "ERROR: Plugins not activated"
+            exit 1
+          fi
 
-      - name: Verify autoloader-coordinator works
+      - name: Verify coordinator
         run: |
-          npx wp-env run cli wp eval "
-            if (class_exists('\Blockera\SharedAutoload\Coordinator')) {
-              echo 'Coordinator class exists: YES';
-              \$coordinator = \Blockera\SharedAutoload\Coordinator::getInstance();
-              echo PHP_EOL . 'Coordinator works on WordPress ${{ matrix.wp }} + PHP ${{ matrix.php }}';
-            } else {
-              echo 'Coordinator class exists: NO';
+          npx --yes @wordpress/env run cli wp eval "
+            if (!class_exists('Blockera\SharedAutoload\Coordinator')) {
+              echo 'ERROR: Coordinator class not found';
               exit(1);
             }
+            \$coordinator = \Blockera\SharedAutoload\Coordinator::getInstance();
+            echo 'Coordinator verified on WordPress ${{ matrix.wp }} + PHP ${{ matrix.php }}';
           "
 
-      - name: Quick version resolution check
+      - name: Verify version resolution
         run: |
-          npx wp-env run cli wp eval "
-            \$version = blockera_name_utils_get_version();
-            \$loaded_from = blockera_name_utils_get_loaded_from();
-            echo 'Version: ' . \$version . ' from ' . \$loaded_from;
-            
-            if (\$version !== '2.0.0' || \$loaded_from !== 'plugin-a') {
-              echo PHP_EOL . 'ERROR: Version resolution failed!';
+          npx --yes @wordpress/env run cli wp eval "
+            if (!function_exists('blockera_name_utils_get_version') || !function_exists('blockera_name_utils_get_loaded_from')) {
+              echo 'ERROR: Helper functions missing';
               exit(1);
             }
-            echo PHP_EOL . 'Version resolution correct!';
+            \$version = blockera_name_utils_get_version();
+            \$loaded_from = blockera_name_utils_get_loaded_from();
+            if (\$version !== '2.0.0' || \$loaded_from !== 'plugin-a') {
+              echo 'ERROR: Version resolution failed';
+              exit(1);
+            }
+            echo 'Version resolution correct: ' . \$version . ' from ' . \$loaded_from;
           "
 
       - name: Display debug info on failure
-        if: failure() || always()
+        if: failure()
         continue-on-error: true
         run: |
-          echo "=========================================="
-          echo "DEBUG INFORMATION (Compatibility Test Failed)"
-          echo "=========================================="
-          echo ""
-          
-          # Check if wp-env is still running
-          if ! npx wp-env run cli wp --info > /dev/null 2>&1; then
-            echo "WARNING: wp-env container is not accessible"
-            npx wp-env logs --no-color 2>&1 | tail -50
-            exit 0
+          if npx --yes @wordpress/env run cli wp --info >/dev/null 2>&1; then
+            npx --yes @wordpress/env logs --no-color 2>&1 | tail -50
           fi
-          
-          echo "=== Docker Container Logs ==="
-          npx wp-env logs --no-color 2>&1 | tail -100 || echo "Could not get logs"
-          
-          echo ""
-          echo "=== WordPress Debug Log ==="
-          npx wp-env run cli cat /var/www/html/wp-content/debug.log 2>/dev/null | tail -50 || echo "No debug.log found"
-          
-          echo ""
-          echo "=== Test if function exists ==="
-          npx wp-env run cli wp eval "
-            echo 'blockera_name_utils_get_version: ' . (function_exists('blockera_name_utils_get_version') ? 'EXISTS' : 'MISSING') . PHP_EOL;
-            echo 'blockera_name_utils_get_loaded_from: ' . (function_exists('blockera_name_utils_get_loaded_from') ? 'EXISTS' : 'MISSING') . PHP_EOL;
-          " 2>&1 || echo "Could not check function"
 
       - name: Stop wp-env
         if: always()
-        run: npx wp-env stop
-
-  integration-summary:
-    name: Integration Tests Summary
-    runs-on: ubuntu-latest
-    needs: [version-resolution-test, wp-compatibility-test]
-    if: always()
-
-    steps:
-      - name: Check test results
-        run: |
-          echo "Test Results Summary"
-          echo ""
-          echo "Version Resolution Tests: ${{ needs.version-resolution-test.result }}"
-          echo "WP Compatibility Tests: ${{ needs.wp-compatibility-test.result }}"
-          echo ""
-          
-          if [ "${{ needs.version-resolution-test.result }}" == "success" ] && [ "${{ needs.wp-compatibility-test.result }}" == "success" ]; then
-            echo "All WordPress integration tests passed!"
-          else
-            echo "Some WordPress integration tests failed"
-            exit 1
-          fi
+        run: npx --yes @wordpress/env stop || true
 
   pr-comment-on-failure:
     name: Post PR Warning Comment
@@ -950,35 +448,15 @@ jobs:
       pull-requests: write
 
     steps:
-      - name: Post warning comment on PR
+      - name: Post warning comment
         uses: actions/github-script@v7
         with:
           script: |
             const prNumber = context.payload.pull_request.number;
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            
             const commentBody = `## ⚠️ Autoloader Coordinator - Version Resolution Warning
 
             The WordPress integration tests have **failed**. This may indicate an issue with how the autoloader-coordinator resolves package versions.
-
-            ### Test Scenarios
-
-            | Scenario | Plugin A | Plugin B | Expected Winner |
-            |----------|----------|----------|-----------------|
-            | plugin-a-newer | 2.0.0 | 1.0.0 | plugin-a |
-            | plugin-b-newer | 1.0.0 | 2.0.0 | plugin-b |
-            | same-version | 1.0.0 | 1.0.0 | plugin-a (default) |
-            | major-version-diff | 3.0.0 | 1.0.0 | plugin-a |
-            | patch-version-diff | 1.0.0 | 1.0.1 | plugin-b |
-
-            ### Possible Causes
-
-            1. **Version comparison bug** - The coordinator may not be correctly comparing semantic versions
-            2. **Loading order issue** - Packages may be loaded before version comparison occurs
-            3. **Missing package registration** - A plugin may not be registering its packages correctly
-            4. **Default/priority handling** - Same version tie-breaking may not work correctly
-
-            ---
 
             🔗 **[View Full Workflow Run](${runUrl})**
 
@@ -1020,69 +498,15 @@ jobs:
       pull-requests: write
 
     steps:
-      - name: Post or update success comment
+      - name: Post success comment
         uses: actions/github-script@v7
         with:
           script: |
             const prNumber = context.payload.pull_request.number;
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            
             const successBody = `## ✅ Autoloader Coordinator - All Tests Passing
 
             All WordPress integration tests have **passed successfully**! The autoloader-coordinator is correctly resolving package versions across all scenarios.
-
-            ### 📊 Version Resolution Tests
-
-            All 5 scenarios passed, confirming the coordinator correctly:
-
-            | Scenario | Plugin A | Plugin B | Expected Winner | Status |
-            |----------|----------|----------|-----------------|--------|
-            | **plugin-a-newer** | 2.0.0 | 1.0.0 | plugin-a | ✅ Pass |
-            | **plugin-b-newer** | 1.0.0 | 2.0.0 | plugin-b | ✅ Pass |
-            | **same-version** | 1.0.0 | 1.0.0 | plugin-a (default) | ✅ Pass |
-            | **major-version-diff** | 3.0.0 | 1.0.0 | plugin-a | ✅ Pass |
-            | **patch-version-diff** | 1.0.0 | 1.0.1 | plugin-b | ✅ Pass |
-
-            ### ✅ What This Confirms
-
-            - **Semantic version comparison** - Correctly identifies newest version (major.minor.patch)
-            - **Version conflict resolution** - Only loads the newest version, preventing conflicts
-            - **Default plugin handling** - Correctly handles tie-breaking when versions are identical
-            - **Package loading** - Functions and classes from the correct version are available
-            - **Feature detection** - Newer version features (like \`blockera_format_name()\`) are accessible
-
-            ### 🔧 WordPress Compatibility Tests
-
-            Compatibility verified across multiple WordPress and PHP versions:
-
-            | WordPress | PHP | Status |
-            |-----------|-----|--------|
-            | latest | 8.2 | ✅ Pass |
-            | latest | 8.1 | ✅ Pass |
-            | 6.5 | 8.2 | ✅ Pass |
-            | 6.4 | 8.1 | ✅ Pass |
-            | 6.3 | 7.4 | ✅ Pass |
-
-            ### 📦 Tested Components
-
-            - ✅ Autoloader-coordinator class loading
-            - ✅ Plugin registration and discovery
-            - ✅ Package manifest generation
-            - ✅ Version comparison logic
-            - ✅ Package file loading (composer.json, functions.php)
-            - ✅ Helper function availability (\`blockera_name_utils_get_version()\`, \`blockera_name_utils_get_loaded_from()\`)
-            - ✅ Version-specific features (v2.0.0+ \`blockera_format_name()\`)
-
-            ### 🎯 Next Steps
-
-            The autoloader-coordinator is working correctly and ready for use. When multiple plugins ship the same package:
-
-            1. The coordinator detects all versions
-            2. Compares them using semantic versioning
-            3. Loads only the newest version
-            4. Makes it available to all plugins
-
-            ---
 
             🔗 **[View Full Workflow Run](${runUrl})**
 
@@ -1111,7 +535,6 @@ jobs:
                 comment_id: warningComment.id,
                 body: successBody
               });
-              console.log('Updated existing warning comment to show success');
             } else if (successComment) {
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,
@@ -1119,7 +542,6 @@ jobs:
                 comment_id: successComment.id,
                 body: successBody
               });
-              console.log('Updated existing success comment');
             } else {
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
@@ -1127,5 +549,4 @@ jobs:
                 issue_number: prNumber,
                 body: successBody
               });
-              console.log('Created new success comment');
             }
