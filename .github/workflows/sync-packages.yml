@@ -3,7 +3,7 @@ name: Sync Packages to Other Repos on Push in Master
 on:
     push:
         branches:
-            - master
+            - main
 
 jobs:
     sync-packages:
