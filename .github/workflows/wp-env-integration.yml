@@ -415,6 +415,8 @@ jobs:
       - name: Test version resolution
         id: version-test
         run: |
+          set +e  # Don't exit on error immediately
+          
           echo "Testing version resolution for scenario: ${{ matrix.scenario_name }}"
           echo "Expected: version=${{ matrix.expected_version }}, loaded_from=${{ matrix.expected_winner }}"
           
@@ -456,10 +458,43 @@ jobs:
           echo "Raw result: $RESULT"
           
           if echo "$RESULT" | grep -q "ERROR:"; then
-            echo "Helper function missing!"
+            echo ""
+            echo "=========================================="
+            echo "ERROR: Helper function missing!"
+            echo "=========================================="
+            echo ""
+            echo "Debugging information:"
+            echo ""
+            
+            # Capture debug info before exiting
+            echo "=== Checking function availability ==="
+            npx wp-env run cli wp eval "
+              echo 'blockera_name_utils_get_version exists: ' . (function_exists('blockera_name_utils_get_version') ? 'YES' : 'NO') . PHP_EOL;
+              echo 'blockera_name_utils_get_loaded_from exists: ' . (function_exists('blockera_name_utils_get_loaded_from') ? 'YES' : 'NO') . PHP_EOL;
+            " 2>&1 || echo "Could not check functions"
+            
+            echo ""
+            echo "=== Checking autoload files ==="
+            npx wp-env run cli cat /var/www/html/wp-content/plugins/plugin-a/vendor/composer/autoload_files.php 2>&1 | grep -i "functions" | head -5 || echo "Could not read autoload_files.php"
+            npx wp-env run cli cat /var/www/html/wp-content/plugins/plugin-b/vendor/composer/autoload_files.php 2>&1 | grep -i "functions" | head -5 || echo "Could not read autoload_files.php"
+            
+            echo ""
+            echo "=== Checking if files exist ==="
+            npx wp-env run cli ls -la /var/www/html/wp-content/plugins/plugin-a/packages/name-utils/php/functions.php 2>&1 || echo "Plugin A functions.php not found"
+            npx wp-env run cli ls -la /var/www/html/wp-content/plugins/plugin-b/packages/name-utils/php/functions.php 2>&1 || echo "Plugin B functions.php not found"
+            
+            echo ""
+            echo "=== Checking coordinator status ==="
+            npx wp-env run cli wp eval "
+              \$coordinator = \Blockera\SharedAutoload\Coordinator::getInstance();
+              echo 'Coordinator instance: ' . get_class(\$coordinator) . PHP_EOL;
+            " 2>&1 || echo "Could not get coordinator instance"
+            
             echo "test_passed=false" >> $GITHUB_OUTPUT
             exit 1
           fi
+          
+          set -e  # Re-enable exit on error
           
           VERSION=$(echo "$RESULT" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | tail -1)
           LOADED_FROM=$(echo "$RESULT" | grep -oE 'plugin-[ab]' | tail -1)
@@ -483,7 +518,47 @@ jobs:
             echo "Got version: $VERSION (expected: $EXPECTED_VERSION)"
             echo "Got loaded_from: $LOADED_FROM (expected: $EXPECTED_WINNER)"
             echo "test_passed=false" >> $GITHUB_OUTPUT
+            
+            # Show debug info before exiting
+            echo ""
+            echo "=== Debug: Checking what was actually loaded ==="
+            npx wp-env run cli wp eval "
+              if (function_exists('blockera_name_utils_get_metadata')) {
+                \$meta = blockera_name_utils_get_metadata();
+                echo 'Metadata: ' . print_r(\$meta, true) . PHP_EOL;
+              }
+            " 2>&1 || echo "Could not get metadata"
+            
             exit 1
+          fi
+
+      - name: Capture debug info after version test
+        if: always()
+        continue-on-error: true
+        run: |
+          # Only show if test failed
+          if [ "${{ steps.version-test.outcome }}" != "success" ]; then
+            echo "=========================================="
+            echo "POST-TEST DEBUG INFO"
+            echo "=========================================="
+            echo ""
+            
+            # Check if wp-env is accessible
+            if ! npx wp-env run cli wp --info > /dev/null 2>&1; then
+              echo "wp-env container not accessible"
+              exit 0
+            fi
+            
+            echo "=== Function Status ==="
+            npx wp-env run cli wp eval "
+              echo 'blockera_name_utils_get_version: ' . (function_exists('blockera_name_utils_get_version') ? 'EXISTS' : 'MISSING') . PHP_EOL;
+              echo 'blockera_name_utils_get_loaded_from: ' . (function_exists('blockera_name_utils_get_loaded_from') ? 'EXISTS' : 'MISSING') . PHP_EOL;
+            " 2>&1 || echo "Could not check functions"
+            
+            echo ""
+            echo "=== Autoload Files Check ==="
+            npx wp-env run cli grep -i "functions" /var/www/html/wp-content/plugins/plugin-a/vendor/composer/autoload_files.php 2>&1 | head -3 || echo "Could not check plugin-a autoload"
+            npx wp-env run cli grep -i "functions" /var/www/html/wp-content/plugins/plugin-b/vendor/composer/autoload_files.php 2>&1 | head -3 || echo "Could not check plugin-b autoload"
           fi
 
       - name: Test version constants
@@ -521,14 +596,28 @@ jobs:
           "
 
       - name: Display debug info on failure
-        if: failure()
+        if: failure() || always()
+        continue-on-error: true
         run: |
+          echo "=========================================="
+          echo "DEBUG INFORMATION (Step failed)"
+          echo "=========================================="
+          echo ""
+          
+          # Check if wp-env is still running
+          if ! npx wp-env run cli wp --info > /dev/null 2>&1; then
+            echo "WARNING: wp-env container is not accessible"
+            echo "Showing Docker logs instead:"
+            npx wp-env logs --no-color 2>&1 | tail -50
+            exit 0
+          fi
+          
           echo "=== Docker Container Logs ==="
-          npx wp-env logs --no-color 2>&1 | tail -100
+          npx wp-env logs --no-color 2>&1 | tail -100 || echo "Could not get logs"
           
           echo ""
           echo "=== WordPress Debug Log ==="
-          npx wp-env run cli cat /var/www/html/wp-content/debug.log 2>/dev/null || echo "No debug.log found"
+          npx wp-env run cli cat /var/www/html/wp-content/debug.log 2>/dev/null | tail -50 || echo "No debug.log found"
           
           echo ""
           echo "=== Check Plugin Files ==="
@@ -549,12 +638,47 @@ jobs:
           
           echo ""
           echo "=== Check autoload files ==="
-          npx wp-env run cli cat /var/www/html/wp-content/plugins/plugin-a/vendor/composer/autoload_files.php 2>/dev/null | head -20 || echo "Could not read plugin-a autoload_files.php"
-          npx wp-env run cli cat /var/www/html/wp-content/plugins/plugin-b/vendor/composer/autoload_files.php 2>/dev/null | head -20 || echo "Could not read plugin-b autoload_files.php"
+          echo "Plugin A autoload_files.php:"
+          npx wp-env run cli cat /var/www/html/wp-content/plugins/plugin-a/vendor/composer/autoload_files.php 2>/dev/null | grep -i "functions" | head -5 || echo "Could not read or functions.php not found"
+          echo ""
+          echo "Plugin B autoload_files.php:"
+          npx wp-env run cli cat /var/www/html/wp-content/plugins/plugin-b/vendor/composer/autoload_files.php 2>/dev/null | grep -i "functions" | head -5 || echo "Could not read or functions.php not found"
           
           echo ""
           echo "=== Test if function exists directly ==="
-          npx wp-env run cli wp eval "var_dump(function_exists('blockera_name_utils_get_version'));" 2>&1 || echo "Could not check function"
+          npx wp-env run cli wp eval "
+            echo 'blockera_name_utils_get_version: ' . (function_exists('blockera_name_utils_get_version') ? 'EXISTS' : 'MISSING') . PHP_EOL;
+            echo 'blockera_name_utils_get_loaded_from: ' . (function_exists('blockera_name_utils_get_loaded_from') ? 'EXISTS' : 'MISSING') . PHP_EOL;
+            
+            // Check what's in GLOBALS
+            if (isset(\$GLOBALS['__composer_autoload_files'])) {
+              echo 'Composer autoload files loaded: ' . count(\$GLOBALS['__composer_autoload_files']) . ' files' . PHP_EOL;
+              foreach (\$GLOBALS['__composer_autoload_files'] as \$key => \$val) {
+                if (strpos(\$key, 'functions') !== false || strpos(\$key, 'name-utils') !== false) {
+                  echo '  Found: ' . \$key . PHP_EOL;
+                }
+              }
+            } else {
+              echo 'No composer autoload files loaded' . PHP_EOL;
+            }
+          " 2>&1 || echo "Could not check function"
+          
+          echo ""
+          echo "=== Coordinator Package Manifest ==="
+          npx wp-env run cli wp eval "
+            \$coordinator = \Blockera\SharedAutoload\Coordinator::getInstance();
+            \$manifest = get_transient('blockera_pkg_manifest');
+            if (\$manifest) {
+              echo 'Package manifest cached:' . PHP_EOL;
+              foreach (\$manifest as \$pkg => \$meta) {
+                if (strpos(\$pkg, 'name-utils') !== false) {
+                  echo '  ' . \$pkg . ': v' . \$meta['version'] . ' from ' . \$meta['plugin'] . PHP_EOL;
+                }
+              }
+            } else {
+              echo 'Package manifest not cached' . PHP_EOL;
+            }
+          " 2>&1 || echo "Could not check manifest"
 
       - name: Stop wp-env
         if: always()
@@ -724,18 +848,34 @@ jobs:
           "
 
       - name: Display debug info on failure
-        if: failure()
+        if: failure() || always()
+        continue-on-error: true
         run: |
+          echo "=========================================="
+          echo "DEBUG INFORMATION (Compatibility Test Failed)"
+          echo "=========================================="
+          echo ""
+          
+          # Check if wp-env is still running
+          if ! npx wp-env run cli wp --info > /dev/null 2>&1; then
+            echo "WARNING: wp-env container is not accessible"
+            npx wp-env logs --no-color 2>&1 | tail -50
+            exit 0
+          fi
+          
           echo "=== Docker Container Logs ==="
-          npx wp-env logs --no-color 2>&1 | tail -100
+          npx wp-env logs --no-color 2>&1 | tail -100 || echo "Could not get logs"
           
           echo ""
           echo "=== WordPress Debug Log ==="
-          npx wp-env run cli cat /var/www/html/wp-content/debug.log 2>/dev/null || echo "No debug.log found"
+          npx wp-env run cli cat /var/www/html/wp-content/debug.log 2>/dev/null | tail -50 || echo "No debug.log found"
           
           echo ""
           echo "=== Test if function exists ==="
-          npx wp-env run cli wp eval "var_dump(function_exists('blockera_name_utils_get_version'));" 2>&1 || echo "Could not check function"
+          npx wp-env run cli wp eval "
+            echo 'blockera_name_utils_get_version: ' . (function_exists('blockera_name_utils_get_version') ? 'EXISTS' : 'MISSING') . PHP_EOL;
+            echo 'blockera_name_utils_get_loaded_from: ' . (function_exists('blockera_name_utils_get_loaded_from') ? 'EXISTS' : 'MISSING') . PHP_EOL;
+          " 2>&1 || echo "Could not check function"
 
       - name: Stop wp-env
         if: always()
