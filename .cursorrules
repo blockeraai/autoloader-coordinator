@@ -97,6 +97,12 @@ require_once __DIR__ . '/packages/autoloader-coordinator/loader.php';
 - Extracts `name` and `version` fields
 - Uses semantic versioning for comparison
 
+### Class Autoloading Testing
+- `name-utils` package includes `NameFormatter` class for PSR-4 testing
+- Class methods verify version and source plugin
+- Tests ensure coordinator handles both file and class autoloading
+- See `TESTING_CLASSES.md` for details
+
 ## Important Files
 
 - `.wp-env.json` - WordPress environment configuration

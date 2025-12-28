@@ -19,6 +19,8 @@ When multiple WordPress plugins ship the same Composer package (e.g., a shared u
 - ✅ Transient caching for performance
 - ✅ WordPress hook-based plugin registration
 - ✅ Composer path repository support
+- ✅ PSR-4 class autoloading support
+- ✅ File autoloading support
 - ✅ CI/CD integration with comprehensive testing
 
 ## Requirements

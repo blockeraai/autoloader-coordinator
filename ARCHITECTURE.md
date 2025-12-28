@@ -221,6 +221,8 @@ Coordinator merges PSR-4 mappings:
 2. Apply version-based priority
 3. Register with ClassLoader
 
+**Testing:** The `name-utils` package includes `NameFormatter` class to verify PSR-4 autoloading works correctly. See `TESTING_CLASSES.md` for details.
+
 ## Integration Points
 
 ### WordPress Hooks

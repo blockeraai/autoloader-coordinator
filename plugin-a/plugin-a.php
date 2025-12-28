@@ -41,7 +41,7 @@ add_action('activated_plugin', [ \Blockera\SharedAutoload\Coordinator::getInstan
 add_action('deactivated_plugin', [ \Blockera\SharedAutoload\Coordinator::getInstance(), 'invalidatePackageManifest' ]);
 add_action('upgrader_process_complete', [ \Blockera\SharedAutoload\Coordinator::getInstance(), 'invalidatePackageManifest' ]);
 
-// Use name-utils package functions (loaded via autoloader-coordinator)
+// Use name-utils package functions and classes (loaded via autoloader-coordinator)
 add_action('admin_notices', function() {
     if ( ! function_exists( 'blockera_name_utils_get_version' ) || ! function_exists( 'blockera_name_utils_get_loaded_from' ) ) {
         return; // name-utils package not loaded yet
@@ -58,6 +58,29 @@ add_action('admin_notices', function() {
         esc_html( $version ),
         esc_html( $loaded_from )
     );
+    
+    // Test class loading (PSR-4 autoloading)
+    if ( class_exists( '\Blockera\NameUtils\NameFormatter' ) ) {
+        $class_version = \Blockera\NameUtils\NameFormatter::get_version();
+        $class_loaded_from = \Blockera\NameUtils\NameFormatter::get_loaded_from();
+        $formatted = \Blockera\NameUtils\NameFormatter::format( 'Plugin A User' );
+        
+        printf(
+            '<div class="notice notice-success is-dismissible">
+                <p><strong>Plugin A:</strong> Class loaded - v%s from %s<br>
+                <code>NameFormatter::format()</code> result: "%s"</p>
+            </div>',
+            esc_html( $class_version ),
+            esc_html( $class_loaded_from ),
+            esc_html( $formatted )
+        );
+    } else {
+        printf(
+            '<div class="notice notice-warning is-dismissible">
+                <p><strong>Plugin A:</strong> <code>NameFormatter</code> class not found!</p>
+            </div>'
+        );
+    }
     
     // Demonstrate v2.0.0+ exclusive feature if available
     if ( function_exists( 'blockera_format_name' ) ) {

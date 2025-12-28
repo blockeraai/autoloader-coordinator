@@ -35,9 +35,6 @@ coverage/
 .git/
 .gitignore
 
-# CI/CD artifacts (keep workflow files visible)
-.github/workflows/*.yml
-
 # Large binary files
 *.zip
 *.tar.gz

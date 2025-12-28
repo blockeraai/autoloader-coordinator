@@ -97,6 +97,13 @@ jobs:
           cp ".github/fixtures/scenarios/$SCENARIO/plugin-a/php/functions.php" plugin-a/packages/name-utils/php/functions.php
           cp ".github/fixtures/scenarios/$SCENARIO/plugin-b/composer.json" plugin-b/packages/name-utils/composer.json
           cp ".github/fixtures/scenarios/$SCENARIO/plugin-b/php/functions.php" plugin-b/packages/name-utils/php/functions.php
+          # Copy NameFormatter class files if they exist
+          if [ -f ".github/fixtures/scenarios/$SCENARIO/plugin-a/php/NameFormatter.php" ]; then
+            cp ".github/fixtures/scenarios/$SCENARIO/plugin-a/php/NameFormatter.php" plugin-a/packages/name-utils/php/NameFormatter.php
+          fi
+          if [ -f ".github/fixtures/scenarios/$SCENARIO/plugin-b/php/NameFormatter.php" ]; then
+            cp ".github/fixtures/scenarios/$SCENARIO/plugin-b/php/NameFormatter.php" plugin-b/packages/name-utils/php/NameFormatter.php
+          fi
 
       - name: Verify fixture versions
         run: |
@@ -233,6 +240,59 @@ jobs:
             echo 'Version resolution correct: ' . \$version . ' from ' . \$loaded_from;
           "
 
+      - name: Test class loading (PSR-4)
+        id: class-test
+        run: |
+          set +e
+          CLASS_OUTPUT=$(npx --yes @wordpress/env run cli wp eval "
+            if (!class_exists('\\\\Blockera\\\\NameUtils\\\\NameFormatter')) {
+              echo 'ERROR:CLASS_NOT_FOUND';
+              exit(1);
+            }
+            \$version = \\Blockera\\NameUtils\\NameFormatter::get_version();
+            \$loaded_from = \\Blockera\\NameUtils\\NameFormatter::get_loaded_from();
+            echo \$version . '|' . \$loaded_from;
+          " 2>&1)
+          
+          # Extract the actual output (skip wp-env wrapper messages)
+          CLASS_RESULT=$(echo "$CLASS_OUTPUT" | grep -E '(version|plugin|ERROR:)' | head -1 | sed 's/^[[:space:]]*//' | tr -d '\r')
+          
+          if echo "$CLASS_RESULT" | grep -q "ERROR:"; then
+            echo "=========================================="
+            echo "ERROR: NameFormatter class not found!"
+            echo "=========================================="
+            echo "Full output:"
+            echo "$CLASS_OUTPUT"
+            exit 1
+          fi
+          
+          CLASS_VERSION=$(echo "$CLASS_RESULT" | cut -d'|' -f1)
+          CLASS_LOADED_FROM=$(echo "$CLASS_RESULT" | cut -d'|' -f2)
+          
+          EXPECTED_VERSION="${{ matrix.expected_version }}"
+          EXPECTED_WINNER="${{ matrix.expected_winner }}"
+          
+          if [ "$CLASS_VERSION" != "$EXPECTED_VERSION" ]; then
+            echo "=========================================="
+            echo "ERROR: Class version mismatch"
+            echo "Expected: $EXPECTED_VERSION"
+            echo "Got: $CLASS_VERSION"
+            echo "=========================================="
+            exit 1
+          fi
+          
+          if [ "$CLASS_LOADED_FROM" != "$EXPECTED_WINNER" ]; then
+            echo "=========================================="
+            echo "ERROR: Class loaded from wrong plugin"
+            echo "Expected: $EXPECTED_WINNER"
+            echo "Got: $CLASS_LOADED_FROM"
+            echo "=========================================="
+            exit 1
+          fi
+          
+          echo "✅ Class loading verified: v$CLASS_VERSION from $CLASS_LOADED_FROM"
+          set -e
+
       - name: Verify homepage rendering
         run: |
           set -e
@@ -250,9 +310,26 @@ jobs:
           if npx --yes @wordpress/env run cli wp --info >/dev/null 2>&1; then
             npx --yes @wordpress/env logs --no-color 2>&1 | tail -100
             npx --yes @wordpress/env run cli wp eval "
-              echo 'Functions:';
+              echo '=== Functions ===';
               echo '  blockera_name_utils_get_version: ' . (function_exists('blockera_name_utils_get_version') ? 'EXISTS' : 'MISSING');
               echo '  blockera_name_utils_get_loaded_from: ' . (function_exists('blockera_name_utils_get_loaded_from') ? 'EXISTS' : 'MISSING');
+              echo '';
+              echo '=== Classes ===';
+              echo '  Blockera\\\\NameUtils\\\\NameFormatter: ' . (class_exists('\\\\Blockera\\\\NameUtils\\\\NameFormatter') ? 'EXISTS' : 'MISSING');
+              if (class_exists('\\\\Blockera\\\\NameUtils\\\\NameFormatter')) {
+                echo '  Class version: ' . \\Blockera\\NameUtils\\NameFormatter::get_version();
+                echo '  Class loaded from: ' . \\Blockera\\NameUtils\\NameFormatter::get_loaded_from();
+              }
+              echo '';
+              echo '=== PSR-4 Autoload ===';
+              \$psr4 = require 'plugin-a/vendor/composer/autoload_psr4.php';
+              if (isset(\$psr4['Blockera\\\\NameUtils\\\\'])) {
+                echo '  Plugin A PSR-4 mapping: ' . implode(', ', \$psr4['Blockera\\\\NameUtils\\\\']);
+              }
+              \$psr4_b = require 'plugin-b/vendor/composer/autoload_psr4.php';
+              if (isset(\$psr4_b['Blockera\\\\NameUtils\\\\'])) {
+                echo '  Plugin B PSR-4 mapping: ' . implode(', ', \$psr4_b['Blockera\\\\NameUtils\\\\']);
+              }
             " 2>&1 || true
           fi
 
