@@ -47,6 +47,31 @@ if (! function_exists('apply_filters')) {
     }
 }
 
+// Create a mock wpdb class for testing.
+if (! class_exists('wpdb')) {
+    class wpdb {
+        public $options = 'wp_options';
+        
+        public function esc_like($text) {
+            return addcslashes($text, '_%\\');
+        }
+        
+        public function prepare($query, ...$args) {
+            return vsprintf(str_replace('%s', "'%s'", $query), $args);
+        }
+        
+        public function query($query) {
+            return true;
+        }
+    }
+}
+
+// Initialize global $wpdb.
+global $wpdb;
+if (null === $wpdb) {
+    $wpdb = new wpdb();
+}
+
 // Load Composer autoloader.
 $autoloader = dirname(__DIR__, 2) . '/vendor/autoload.php';
 
