@@ -243,55 +243,23 @@ jobs:
       - name: Test class loading (PSR-4)
         id: class-test
         run: |
-          set +e
-          CLASS_OUTPUT=$(npx --yes @wordpress/env run cli wp eval "
+          npx --yes @wordpress/env run cli wp eval "
             if (!class_exists('\\\\Blockera\\\\NameUtils\\\\NameFormatter')) {
-              echo 'ERROR:CLASS_NOT_FOUND';
+              echo 'ERROR: NameFormatter class not found';
               exit(1);
             }
             \$version = \\Blockera\\NameUtils\\NameFormatter::get_version();
             \$loaded_from = \\Blockera\\NameUtils\\NameFormatter::get_loaded_from();
-            echo \$version . '|' . \$loaded_from;
-          " 2>&1)
-          
-          # Extract the actual output (skip wp-env wrapper messages)
-          CLASS_RESULT=$(echo "$CLASS_OUTPUT" | grep -E '(version|plugin|ERROR:)' | head -1 | sed 's/^[[:space:]]*//' | tr -d '\r')
-          
-          if echo "$CLASS_RESULT" | grep -q "ERROR:"; then
-            echo "=========================================="
-            echo "ERROR: NameFormatter class not found!"
-            echo "=========================================="
-            echo "Full output:"
-            echo "$CLASS_OUTPUT"
-            exit 1
-          fi
-          
-          CLASS_VERSION=$(echo "$CLASS_RESULT" | cut -d'|' -f1)
-          CLASS_LOADED_FROM=$(echo "$CLASS_RESULT" | cut -d'|' -f2)
-          
-          EXPECTED_VERSION="${{ matrix.expected_version }}"
-          EXPECTED_WINNER="${{ matrix.expected_winner }}"
-          
-          if [ "$CLASS_VERSION" != "$EXPECTED_VERSION" ]; then
-            echo "=========================================="
-            echo "ERROR: Class version mismatch"
-            echo "Expected: $EXPECTED_VERSION"
-            echo "Got: $CLASS_VERSION"
-            echo "=========================================="
-            exit 1
-          fi
-          
-          if [ "$CLASS_LOADED_FROM" != "$EXPECTED_WINNER" ]; then
-            echo "=========================================="
-            echo "ERROR: Class loaded from wrong plugin"
-            echo "Expected: $EXPECTED_WINNER"
-            echo "Got: $CLASS_LOADED_FROM"
-            echo "=========================================="
-            exit 1
-          fi
-          
-          echo "✅ Class loading verified: v$CLASS_VERSION from $CLASS_LOADED_FROM"
-          set -e
+            \$expected_version = '${{ matrix.expected_version }}';
+            \$expected_winner = '${{ matrix.expected_winner }}';
+            if (\$version !== \$expected_version || \$loaded_from !== \$expected_winner) {
+              echo 'ERROR: Class loading failed';
+              echo 'Expected: ' . \$expected_version . ' from ' . \$expected_winner;
+              echo 'Got: ' . \$version . ' from ' . \$loaded_from;
+              exit(1);
+            }
+            echo 'Class loading correct: ' . \$version . ' from ' . \$loaded_from;
+          "
 
       - name: Verify homepage rendering
         run: |
